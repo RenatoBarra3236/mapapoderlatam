@@ -1,54 +1,47 @@
--- =============================================
--- SCHEMA: Mapa de Poder Político LATAM
--- =============================================
+-- Create database
+CREATE DATABASE IF NOT EXISTS mapapoderlatam CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE mapapoderlatam;
 
--- Tipos posibles de nodo
--- 'person'   → funcionario, político, empresario
--- 'company'  → empresa, ONG, fundación
--- 'contract' → licitación o contrato público
-
+-- Nodes table
 CREATE TABLE IF NOT EXISTS nodes (
-  id          SERIAL PRIMARY KEY,
-  external_id TEXT UNIQUE,           -- RUT, ID de licitación, etc.
-  type        TEXT NOT NULL CHECK (type IN ('person', 'company', 'contract')),
-  name        TEXT NOT NULL,
-  country     TEXT NOT NULL DEFAULT 'CL',
-  metadata    JSONB DEFAULT '{}',    -- cargo, monto, fecha, etc.
-  risk_score  INTEGER DEFAULT 0,     -- calculado al insertar edges
-  created_at  TIMESTAMP DEFAULT NOW()
-);
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  external_id VARCHAR(255) UNIQUE,
+  type VARCHAR(50) NOT NULL CHECK (type IN ('person', 'company', 'contract')),
+  name VARCHAR(255) NOT NULL,
+  country VARCHAR(10) DEFAULT 'CL',
+  metadata JSON DEFAULT '{}',
+  risk_score INT DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
--- Tipos posibles de relación (edge)
--- 'owns'          → persona es dueña/socia de empresa
--- 'awarded'       → empresa ganó contrato
--- 'signed'        → funcionario firmó contrato
--- 'donated_to'    → persona donó a campaña (node tipo person)
--- 'family_of'     → relación familiar entre personas
--- 'former_role'   → persona tuvo cargo en empresa/institución
+  INDEX idx_nodes_name (name),
+  INDEX idx_nodes_type (type),
+  INDEX idx_nodes_country (country),
+  FULLTEXT INDEX ft_nodes_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Edges table
 CREATE TABLE IF NOT EXISTS edges (
-  id          SERIAL PRIMARY KEY,
-  source_id   INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  target_id   INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  type        TEXT NOT NULL,
-  label       TEXT,                  -- descripción legible de la relación
-  weight      NUMERIC DEFAULT 1.0,   -- fuerza de la conexión (ej: monto en millones)
-  source_url  TEXT,                  -- URL al documento original
-  valid_from  DATE,
-  valid_to    DATE,
-  metadata    JSONB DEFAULT '{}',
-  created_at  TIMESTAMP DEFAULT NOW(),
-  UNIQUE (source_id, target_id, type)
-);
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  source_id INT NOT NULL,
+  target_id INT NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  label VARCHAR(255),
+  weight DECIMAL(10, 2) DEFAULT 1.0,
+  source_url VARCHAR(500),
+  valid_from DATE,
+  valid_to DATE,
+  metadata JSON DEFAULT '{}',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
--- Índices para búsquedas rápidas
-CREATE INDEX IF NOT EXISTS idx_nodes_name    ON nodes USING GIN (to_tsvector('spanish', name));
-CREATE INDEX IF NOT EXISTS idx_nodes_type    ON nodes (type);
-CREATE INDEX IF NOT EXISTS idx_nodes_country ON nodes (country);
-CREATE INDEX IF NOT EXISTS idx_edges_source  ON edges (source_id);
-CREATE INDEX IF NOT EXISTS idx_edges_target  ON edges (target_id);
+  FOREIGN KEY (source_id) REFERENCES nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_id) REFERENCES nodes(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_edge (source_id, target_id, type),
+  INDEX idx_edges_source (source_id),
+  INDEX idx_edges_target (target_id),
+  INDEX idx_edges_type (type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Vista: nodos con su grado de conectividad (útil para el risk_score)
+-- Node degree view (for stats)
 CREATE OR REPLACE VIEW node_degree AS
 SELECT
   n.id,
@@ -61,4 +54,4 @@ SELECT
 FROM nodes n
 LEFT JOIN edges e1 ON e1.source_id = n.id
 LEFT JOIN edges e2 ON e2.target_id = n.id
-GROUP BY n.id;
+GROUP BY n.id, n.name, n.type, n.country;
