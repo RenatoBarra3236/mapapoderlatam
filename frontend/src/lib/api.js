@@ -45,6 +45,18 @@ async function request(path, config = {}) {
   }
 }
 
+async function requestPost(path, payload = {}) {
+  if (!USE_BACKEND) {
+    throw new ApiError('Backend desactivado por VITE_USE_BACKEND=false.');
+  }
+  try {
+    const { data } = await client.post(path, payload);
+    return data;
+  } catch (error) {
+    throw new ApiError(readableError(error), error);
+  }
+}
+
 function demoCaseById(caseId) {
   const key = String(caseId || '');
   return DEMO_CASES[key] ? normalizeDemoCase(DEMO_CASES[key]) : null;
@@ -154,4 +166,43 @@ export function getDemoCases() {
 
 export function entityToFallbackCase(entity) {
   return fallbackCaseFromEntity(entity);
+}
+
+function buildChatContext(caseData, lang) {
+  const root = caseData.nodes.find(n => n.id === caseData.rootId) || caseData.nodes[0];
+  const summary = typeof caseData.summary === 'string'
+    ? caseData.summary
+    : caseData.summary?.[lang] || caseData.summary?.es || '';
+
+  const nodeById = Object.fromEntries(caseData.nodes.map(n => [n.id, n]));
+
+  return {
+    entity_name: root?.name || '',
+    entity_type: root?.typeLabel?.[lang] || root?.type || '',
+    summary: summary.slice(0, 600),
+    node_count: caseData.nodes.length,
+    edge_count: caseData.edges.length,
+    flagged_count: caseData.edges.filter(e => e.flag).length,
+    nodes: caseData.nodes.slice(0, 20).map(n => ({
+      name: n.name,
+      type: n.typeLabel?.[lang] || n.type,
+      risk: n.risk || 0,
+    })),
+    edges: caseData.edges.slice(0, 25).map(e => ({
+      from: nodeById[e.s]?.name || e.s,
+      relation: e.labelI18n?.[lang] || e.label || e.type,
+      to: nodeById[e.t]?.name || e.t,
+      flag: e.flag,
+    })),
+    flags: caseData.flags.slice(0, 10).map(f => ({
+      severity: f.severity,
+      title: typeof f.title === 'string' ? f.title : f.title?.[lang] || f.title?.es || '',
+      evidence: typeof f.evidence === 'string' ? f.evidence : f.evidence?.[lang] || f.evidence?.es || '',
+    })),
+  };
+}
+
+export async function chatWithProfile(message, caseData, lang, history = []) {
+  const context = buildChatContext(caseData, lang);
+  return requestPost('/chat', { message, context, lang, history });
 }

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     SERVEL_DATA_URL: str = ""
     REGISTRO_COLABORADORES_URL: str = ""
     ANTHROPIC_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    AI_PROVIDER: str = "claude"  # "claude" | "gemini"
 
     @property
     def cors_origins(self) -> list[str]:

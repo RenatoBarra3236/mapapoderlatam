@@ -12,8 +12,8 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     env,
-    fs::{File, OpenOptions},
-    io::{self, BufWriter, Read, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::Child,
     sync::mpsc::{self, Receiver, Sender},
@@ -102,6 +102,8 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Command {
     FastDemo(FastDemoArgs),
+    IngestChilecompra(ChileSelectiveArgs),
+    DbDiagnoseDuplicates(DbDiagnoseArgs),
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -114,6 +116,8 @@ struct FastDemoArgs {
     offshore_dir: Option<String>,
     #[arg(long, default_value_t = 100)]
     limit_audiences: u64,
+    #[arg(long, default_value_t = 0)]
+    drop_oldest_percent: u8,
     #[arg(long)]
     focus: Option<String>,
     #[arg(long)]
@@ -130,10 +134,112 @@ struct FastDemoArgs {
     raw_mode: RawMode,
 }
 
+#[derive(clap::Args, Debug, Clone)]
+struct ChileSelectiveArgs {
+    #[arg(long)]
+    from: Option<String>,
+    #[arg(long)]
+    to: Option<String>,
+    #[arg(long)]
+    buyer: Option<String>,
+    #[arg(long)]
+    keyword: Option<String>,
+    #[arg(long)]
+    supplier_rut: Option<String>,
+    #[arg(long)]
+    supplier_name: Option<String>,
+    #[arg(long)]
+    fast_demo: bool,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long, default_value_t = 50)]
+    limit: u64,
+    #[arg(long, default_value_t = 20)]
+    max_requests: u64,
+    #[arg(long, default_value_t = 1000)]
+    delay_ms: u64,
+    #[arg(long, default_value_t = 2)]
+    retry: u32,
+    #[arg(long, default_value_t = 2000)]
+    backoff_ms: u64,
+    #[arg(long)]
+    cache: bool,
+    #[arg(long)]
+    no_cache: bool,
+    #[arg(long, default_value = ".cache/chilecompra")]
+    cache_dir: String,
+    #[arg(long)]
+    skip_raw: bool,
+    #[arg(long, value_enum, default_value_t = RawMode::Full)]
+    raw_mode: RawMode,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+struct DbDiagnoseArgs {
+    #[arg(long)]
+    fix_safe: bool,
+}
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum RawMode {
     Minimal,
     Full,
+}
+
+#[derive(Clone)]
+struct ChileRequest {
+    base_url: String,
+    dataset_name: &'static str,
+    record_type: &'static str,
+    params: Vec<(String, String)>,
+    cache_key_url: String,
+}
+
+#[derive(Default)]
+struct ChileSelectiveStats {
+    requests_made: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    rate_limit_waits: u64,
+    records_fetched: u64,
+    records_selected: u64,
+    entities_upserted: u64,
+    relationships_upserted: u64,
+    duplicates_skipped: u64,
+    failed_records: u64,
+}
+
+#[derive(Clone)]
+struct ChileSelectedRecord {
+    record_type: String,
+    dataset_name: String,
+    external_id: String,
+    source_url: String,
+    record: Value,
+    score: i64,
+}
+
+#[derive(Clone)]
+struct ChileRecommendedEntity {
+    id: i32,
+    display_name: String,
+    entity_type: String,
+}
+
+struct ChileHttpClient {
+    ticket: String,
+    max_requests: u64,
+    delay: Duration,
+    retry: u32,
+    backoff: Duration,
+    cache_enabled: bool,
+    cache_dir: PathBuf,
+    requests_made: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    rate_limit_waits: u64,
+    last_request_at: Option<Instant>,
+    agent: ureq::Agent,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -233,14 +339,23 @@ fn main() -> Result<()> {
         &args
             .database_url
             .clone()
+            .or_else(|| env::var("RUST_DATABASE_URL").ok())
             .or_else(|| env::var("DATABASE_URL").ok())
             .unwrap_or_else(|| {
                 "postgresql://mapapoder:mapapoder@localhost:5432/mapapoderlatam".to_string()
             }),
     );
 
-    if let Some(Command::FastDemo(fast_args)) = args.command.as_ref() {
-        run_fast_demo(db_url.clone(), &backend_dir, fast_args)?;
+    if let Some(command) = args.command.as_ref() {
+        match command {
+            Command::FastDemo(fast_args) => run_fast_demo(db_url.clone(), &backend_dir, fast_args)?,
+            Command::IngestChilecompra(chile_args) => {
+                run_chilecompra_selective_cli(db_url.clone(), &backend_dir, chile_args)?
+            }
+            Command::DbDiagnoseDuplicates(dup_args) => {
+                run_duplicate_diagnosis_cli(&db_url, dup_args.fix_safe)?
+            }
+        }
         return Ok(());
     }
 
@@ -295,6 +410,21 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    println!("Mapa Poder Latam data CLI");
+    println!();
+    println!("Comandos principales:");
+    println!("  cargo run -- ingest-chilecompra --fast-demo --limit 50");
+    println!("  cargo run -- ingest-chilecompra --fast-demo --dry-run");
+    println!("  cargo run -- db-diagnose-duplicates");
+    println!("  cargo run -- db-diagnose-duplicates --fix-safe");
+    println!();
+    println!("Compatibilidad TUI: usa --run-infolobby, --run-offshore o --chilecompra-once para workers existentes.");
+    println!("Estado actual:");
+    let stats = collect_stats(&db_url).unwrap_or_default();
+    print_stats(&stats);
+    return Ok(());
+
+    #[allow(unreachable_code)]
     let (tx, rx) = mpsc::channel();
     let log_file = open_log_file(&backend_dir);
     let mut app = App {
@@ -1126,6 +1256,7 @@ fn run_fast_demo(db_url: String, backend_dir: &Path, args: &FastDemoArgs) -> Res
                         db_url: db_url.clone(),
                         data_dir: infolobby_dir,
                         limit_audiences: args.limit_audiences,
+                        drop_oldest_percent: args.drop_oldest_percent,
                         focus: args.focus.clone(),
                         audience_ids: args.audience_ids.clone(),
                         skip_raw_records: args.skip_raw
@@ -1201,6 +1332,7 @@ struct FastInfolobbyOptions {
     db_url: String,
     data_dir: PathBuf,
     limit_audiences: u64,
+    drop_oldest_percent: u8,
     focus: Option<String>,
     audience_ids: Option<String>,
     skip_raw_records: bool,
@@ -1223,6 +1355,7 @@ fn run_infolobby_fast_demo(
     tx: Sender<Msg>,
 ) -> Result<InfolobbyRunSummary> {
     let mut selection = select_fast_infolobby_audiences(&opts)?;
+    retain_recent_infolobby_selection(&opts, &mut selection)?;
     gather_fast_infolobby_linked_codes(&opts.data_dir, &mut selection)?;
     let audience_count = selection.audience_ids.len() as u64;
     if audience_count == 0 {
@@ -1317,7 +1450,13 @@ fn run_infolobby_fast_demo(
 
 fn select_fast_infolobby_audiences(opts: &FastInfolobbyOptions) -> Result<InfolobbyFastSelection> {
     let mut selection = InfolobbyFastSelection::default();
-    let limit = opts.limit_audiences.max(1) as usize;
+    let percent = opts.drop_oldest_percent.min(95) as usize;
+    let limit = if percent > 0 {
+        ((opts.limit_audiences.max(1) as usize) * 100 / (100 - percent))
+            .max(opts.limit_audiences as usize + 1)
+    } else {
+        opts.limit_audiences.max(1) as usize
+    };
     if let Some(ids) = &opts.audience_ids {
         for id in ids.split([',', ';', ' ', '\n', '\t']) {
             let clean = clean_code_rs(id);
@@ -1329,6 +1468,16 @@ fn select_fast_infolobby_audiences(opts: &FastInfolobbyOptions) -> Result<Infolo
             }
         }
         return Ok(selection);
+    }
+    if opts.drop_oldest_percent > 0 && opts.focus.is_none() {
+        select_recent_infolobby_audiences(
+            &opts.data_dir,
+            opts.limit_audiences.max(1) as usize,
+            &mut selection.audience_ids,
+        )?;
+        if !selection.audience_ids.is_empty() {
+            return Ok(selection);
+        }
     }
     if let Some(focus) = &opts.focus {
         let needle = focus.trim().to_ascii_lowercase();
@@ -1352,6 +1501,88 @@ fn select_fast_infolobby_audiences(opts: &FastInfolobbyOptions) -> Result<Infolo
     }
     select_connected_infolobby_sample(&opts.data_dir, limit, &mut selection.audience_ids)?;
     Ok(selection)
+}
+
+fn select_recent_infolobby_audiences(
+    data_dir: &Path,
+    limit: usize,
+    audience_ids: &mut HashSet<String>,
+) -> Result<()> {
+    let path = data_dir.join("audiencias.csv");
+    let mut file = File::open(&path)?;
+    let len = file.metadata()?.len();
+    let tail_bytes = 32_u64 * 1024 * 1024;
+    let mut start = len.saturating_sub(tail_bytes);
+    if start % 2 != 0 {
+        start += 1;
+    }
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::with_capacity((len - start).min(tail_bytes) as usize);
+    file.read_to_end(&mut bytes)?;
+    let (decoded, _, _) = encoding_rs::UTF_16LE.decode(&bytes);
+    let mut text = decoded.into_owned();
+    if start > 0 {
+        if let Some(pos) = text.find('\n') {
+            text = text[pos + 1..].to_string();
+        }
+    }
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(text.as_bytes());
+    let mut rows = Vec::with_capacity(limit.saturating_mul(4).max(100));
+    for row in rdr.records() {
+        let row = row?;
+        let code = row.get(1).map(clean_code_rs).unwrap_or_default();
+        if code.is_empty() || code == "CodigoURI" {
+            continue;
+        }
+        let date = row.get(4).unwrap_or("").to_string();
+        if !date.is_empty() {
+            rows.push((date, code));
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, code) in rows.into_iter().take(limit) {
+        audience_ids.insert(code);
+    }
+    Ok(())
+}
+
+fn retain_recent_infolobby_selection(
+    opts: &FastInfolobbyOptions,
+    selection: &mut InfolobbyFastSelection,
+) -> Result<()> {
+    let percent = opts.drop_oldest_percent.min(95);
+    if percent == 0 || selection.audience_ids.len() <= opts.limit_audiences as usize {
+        return Ok(());
+    }
+    let path = opts.data_dir.join("audiencias.csv");
+    let headers = headers_for("audiencias.csv");
+    let mut rdr = utf16_csv_reader(&path)?;
+    validate_infolobby_headers(&mut rdr, &path, &headers)?;
+    let mut dated = Vec::new();
+    for row in rdr.records() {
+        let row = row?;
+        let Some(code) = audience_code_from_row("audiencias.csv", &headers, &row) else {
+            continue;
+        };
+        if !selection.audience_ids.contains(&code) {
+            continue;
+        }
+        let date = csv_value(&headers, &row, "fechaEvento").to_string();
+        dated.push((date, code));
+    }
+    if dated.is_empty() {
+        return Ok(());
+    }
+    dated.sort_by(|a, b| b.0.cmp(&a.0));
+    let keep = (opts.limit_audiences.max(1) as usize).min(dated.len());
+    let keep_ids: HashSet<String> = dated.into_iter().take(keep).map(|(_, code)| code).collect();
+    selection
+        .audience_ids
+        .retain(|code| keep_ids.contains(code));
+    Ok(())
 }
 
 fn scan_infolobby_for_focus(
@@ -1734,6 +1965,1122 @@ fn pg_error_detail(err: &anyhow::Error) -> String {
         }
     }
     err.to_string()
+}
+
+fn run_chilecompra_selective_cli(
+    db_url: String,
+    backend_dir: &Path,
+    args: &ChileSelectiveArgs,
+) -> Result<()> {
+    let ticket = env::var("CHILECOMPRA_TICKET")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "CHILECOMPRA_TICKET no configurado. Define la variable sin hardcodearla."
+            )
+        })?;
+    let base_url = env::var("CHILECOMPRA_BASE_URL").unwrap_or_default();
+    let effective_cache = !args.no_cache;
+    let cache_dir = {
+        let raw = PathBuf::from(&args.cache_dir);
+        if raw.is_absolute() {
+            raw
+        } else {
+            backend_dir.parent().unwrap_or(backend_dir).join(raw)
+        }
+    };
+    let limit = args.limit.clamp(1, 500);
+    let (from, to) = chile_selective_date_window(args)?;
+    let requests = build_chile_discovery_requests(args, &from, &to, &base_url);
+    let filters = chile_filter_summary(args, &from, &to, limit);
+
+    println!("ChileCompra Selective Loader");
+    println!("Filters: {filters}");
+    println!(
+        "Rate limit: max_requests={} delay_ms={} retry={} backoff_ms={} cache={} cache_dir={}",
+        args.max_requests,
+        args.delay_ms.max(1),
+        args.retry,
+        args.backoff_ms,
+        effective_cache,
+        cache_dir.display()
+    );
+
+    if args.dry_run {
+        print_chile_dry_run(&requests, args, effective_cache, &cache_dir, &filters);
+        return Ok(());
+    }
+
+    let mut http = ChileHttpClient::new(
+        ticket,
+        args.max_requests.max(1),
+        args.delay_ms.max(1),
+        args.retry,
+        args.backoff_ms,
+        effective_cache,
+        cache_dir,
+    )?;
+    let mut stats = ChileSelectiveStats::default();
+    let mut candidates = Vec::new();
+
+    for req in &requests {
+        if http.requests_made >= http.max_requests {
+            break;
+        }
+        match http.get_json(req) {
+            Ok(payload) => {
+                let listed = payload
+                    .get("Listado")
+                    .or_else(|| payload.get("listado"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                stats.records_fetched += listed.len() as u64;
+                for item in listed {
+                    if let Some(selected) = chile_record_candidate(req, item, args) {
+                        candidates.push(selected);
+                    }
+                }
+            }
+            Err(err) => {
+                stats.failed_records += 1;
+                eprintln!("ChileCompra discovery error: {err}");
+                if is_chile_auth_error(&err.to_string()) {
+                    anyhow::bail!("ChileCompra rechazo autenticacion/autorizacion (401/403). Revisa CHILECOMPRA_TICKET.");
+                }
+            }
+        }
+        if candidates.len() as u64 >= limit.saturating_mul(3) {
+            break;
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.external_id.cmp(&b.external_id))
+    });
+    candidates.dedup_by(|a, b| a.record_type == b.record_type && a.external_id == b.external_id);
+    candidates.truncate(limit as usize);
+
+    let detail_budget = http.max_requests.saturating_sub(http.requests_made);
+    let details_to_fetch = candidates.len().min(detail_budget as usize);
+    let mut selected = Vec::new();
+    for candidate in candidates.into_iter().take(details_to_fetch) {
+        let detail_req = chile_detail_request(&candidate, &base_url);
+        match http.get_json(&detail_req) {
+            Ok(payload) => {
+                let listed = payload
+                    .get("Listado")
+                    .or_else(|| payload.get("listado"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if listed.is_empty() {
+                    selected.push(candidate);
+                    continue;
+                }
+                for item in listed {
+                    if let Some(mut detail) = chile_record_candidate(&detail_req, item, args) {
+                        detail.source_url = detail_req.cache_key_url.clone();
+                        selected.push(detail);
+                    }
+                }
+            }
+            Err(err) => {
+                stats.failed_records += 1;
+                eprintln!(
+                    "ChileCompra detail error for {}: {err}",
+                    candidate.external_id
+                );
+                if err.to_string().contains("max_requests") {
+                    break;
+                }
+                selected.push(candidate);
+            }
+        }
+        if selected.len() as u64 >= limit {
+            break;
+        }
+    }
+    selected.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.external_id.cmp(&b.external_id))
+    });
+    selected.dedup_by(|a, b| a.record_type == b.record_type && a.external_id == b.external_id);
+    selected.retain(|r| chile_has_graph_value(r, args.fast_demo));
+    selected.truncate(limit as usize);
+
+    stats.requests_made = http.requests_made;
+    stats.cache_hits = http.cache_hits;
+    stats.cache_misses = http.cache_misses;
+    stats.rate_limit_waits = http.rate_limit_waits;
+    stats.records_selected = selected.len() as u64;
+
+    let mut client = Client::connect(&db_url, NoTls)?;
+    client.batch_execute("SET statement_timeout = 0")?;
+    let run_id: i32 = client
+        .query_one(
+            "INSERT INTO ingestion_runs (source_name, status, metadata) VALUES ('chilecompra', 'running', $1::text::jsonb) RETURNING id",
+            &[&serde_json::json!({"mode":"selective_api","filters":filters,"limit":limit,"cache":effective_cache}).to_string()],
+        )?
+        .get(0);
+    let persist_result = (|| -> Result<()> {
+        client.batch_execute("BEGIN")?;
+        for selected_record in &selected {
+            let before = chile_count_graph_rows(&mut client)?;
+            if !args.skip_raw && matches!(args.raw_mode, RawMode::Full) {
+                upsert_chile_raw_record(&mut client, selected_record)?;
+            }
+            normalize_and_store_chile(
+                &mut client,
+                &selected_record.record,
+                &selected_record.record_type,
+                &selected_record.source_url,
+            )?;
+            let after = chile_count_graph_rows(&mut client)?;
+            stats.entities_upserted += after.0.saturating_sub(before.0);
+            stats.relationships_upserted += after.1.saturating_sub(before.1);
+            if after == before {
+                stats.duplicates_skipped += 1;
+            }
+        }
+        client.batch_execute("COMMIT")?;
+        Ok(())
+    })();
+    match persist_result {
+        Ok(()) => finish_simple_run(
+            &mut client,
+            run_id,
+            "completed",
+            stats.records_fetched,
+            stats.records_selected,
+            None,
+        )?,
+        Err(err) => {
+            let _ = client.batch_execute("ROLLBACK");
+            let _ = finish_simple_run(
+                &mut client,
+                run_id,
+                "failed",
+                stats.records_fetched,
+                stats.records_selected,
+                Some(&err.to_string()),
+            );
+            return Err(err);
+        }
+    }
+
+    let recommendations = collect_chile_recommendations(&db_url)?;
+    print_chile_ingestion_summary(&stats, &recommendations);
+    Ok(())
+}
+
+fn chile_selective_date_window(args: &ChileSelectiveArgs) -> Result<(String, String)> {
+    let today_days =
+        date_from_iso(&today_santiago_iso()).unwrap_or_else(|| ymd_to_days(2026, 5, 17));
+    let default_span = if args.fast_demo { 5 } else { 14 };
+    let from_days = args
+        .from
+        .as_deref()
+        .and_then(date_from_iso)
+        .unwrap_or_else(|| today_days.saturating_sub(default_span));
+    let to_days = args
+        .to
+        .as_deref()
+        .and_then(date_from_iso)
+        .unwrap_or(today_days);
+    if from_days > to_days {
+        anyhow::bail!("Rango de fechas invalido: --from debe ser <= --to");
+    }
+    let max_span = if args.fast_demo { 7 } else { 62 };
+    if to_days.saturating_sub(from_days) > max_span {
+        anyhow::bail!("Rango demasiado amplio para carga selectiva: usa hasta {max_span} dias");
+    }
+    Ok((days_to_iso(from_days), days_to_iso(to_days)))
+}
+
+fn days_to_iso(days: u32) -> String {
+    let (y, m, d) = days_to_ymd(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn iso_to_ddmmyyyy(value: &str) -> Result<String> {
+    let days = date_from_iso(value).ok_or_else(|| anyhow::anyhow!("Fecha invalida: {value}"))?;
+    let (y, m, d) = days_to_ymd(days);
+    Ok(format!("{d:02}{m:02}{y:04}"))
+}
+
+fn build_chile_discovery_requests(
+    args: &ChileSelectiveArgs,
+    from: &str,
+    to: &str,
+    base_url_override: &str,
+) -> Vec<ChileRequest> {
+    let from_days = date_from_iso(from).unwrap();
+    let to_days = date_from_iso(to).unwrap();
+    let lic_url = chile_base_url(base_url_override, CHILE_LICITACIONES_URL);
+    let oc_url = chile_base_url(base_url_override, CHILE_ORDENES_COMPRA_URL);
+    let mut requests = Vec::new();
+    for day in from_days..=to_days {
+        let iso = days_to_iso(day);
+        let fecha = iso_to_ddmmyyyy(&iso).unwrap_or_default();
+        requests.push(ChileRequest::new(
+            lic_url.clone(),
+            "tenders",
+            "tender",
+            vec![("fecha".to_string(), fecha.clone())],
+        ));
+        requests.push(ChileRequest::new(
+            oc_url.clone(),
+            "purchase_orders",
+            "purchase_order",
+            vec![("fecha".to_string(), fecha)],
+        ));
+    }
+    if args.fast_demo {
+        requests.truncate(args.max_requests.min(6) as usize);
+    }
+    requests
+}
+
+fn chile_base_url(override_base: &str, default_url: &str) -> String {
+    if override_base.trim().is_empty() {
+        default_url.to_string()
+    } else {
+        let suffix = default_url
+            .rsplit_once("/servicios/")
+            .map(|(_, tail)| format!("/servicios/{tail}"))
+            .unwrap_or_else(|| default_url.to_string());
+        format!("{}{}", override_base.trim().trim_end_matches('/'), suffix)
+    }
+}
+
+impl ChileRequest {
+    fn new(
+        base_url: impl Into<String>,
+        dataset_name: &'static str,
+        record_type: &'static str,
+        params: Vec<(String, String)>,
+    ) -> Self {
+        let base_url = base_url.into();
+        let cache_key_url = safe_chile_url(&base_url, &params);
+        Self {
+            base_url,
+            dataset_name,
+            record_type,
+            params,
+            cache_key_url,
+        }
+    }
+
+    fn actual_url(&self, ticket: &str) -> String {
+        let mut params = self.params.clone();
+        params.push(("ticket".to_string(), ticket.to_string()));
+        format!("{}?{}", self.base_url, encode_params(&params))
+    }
+}
+
+fn safe_chile_url(base_url: &str, params: &[(String, String)]) -> String {
+    let mut safe = params.to_vec();
+    safe.push(("ticket".to_string(), "***".to_string()));
+    format!("{base_url}?{}", encode_params(&safe))
+}
+
+fn encode_params(params: &[(String, String)]) -> String {
+    params
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlish(k), urlish(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+impl ChileHttpClient {
+    fn new(
+        ticket: String,
+        max_requests: u64,
+        delay_ms: u64,
+        retry: u32,
+        backoff_ms: u64,
+        cache_enabled: bool,
+        cache_dir: PathBuf,
+    ) -> Result<Self> {
+        if cache_enabled {
+            fs::create_dir_all(&cache_dir)?;
+        }
+        Ok(Self {
+            ticket,
+            max_requests,
+            delay: Duration::from_millis(delay_ms.max(1)),
+            retry,
+            backoff: Duration::from_millis(backoff_ms),
+            cache_enabled,
+            cache_dir,
+            requests_made: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            rate_limit_waits: 0,
+            last_request_at: None,
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(30))
+                .build(),
+        })
+    }
+
+    fn get_json(&mut self, req: &ChileRequest) -> Result<Value> {
+        if self.cache_enabled {
+            if let Some(payload) = self.read_cache(req)? {
+                self.cache_hits += 1;
+                println!("CACHE HIT {}", req.cache_key_url);
+                return Ok(payload);
+            }
+            self.cache_misses += 1;
+            println!("CACHE MISS {}", req.cache_key_url);
+        }
+        if self.requests_made >= self.max_requests {
+            anyhow::bail!("max_requests alcanzado ({})", self.max_requests);
+        }
+        self.wait_delay();
+        let url = req.actual_url(&self.ticket);
+        println!("API REQUEST {}", req.cache_key_url);
+        let mut last_err = String::new();
+        for attempt in 0..=self.retry {
+            self.requests_made += 1;
+            match self.agent.get(&url).call() {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.into_string()?;
+                    let payload: Value = serde_json::from_str(&body)?;
+                    if self.cache_enabled {
+                        self.write_cache(req, status, &payload)?;
+                    }
+                    self.last_request_at = Some(Instant::now());
+                    return Ok(payload);
+                }
+                Err(ureq::Error::Status(code, resp)) => {
+                    if code == 401 || code == 403 {
+                        anyhow::bail!("HTTP {code}: ticket invalido o sin permisos");
+                    }
+                    let body = resp.into_string().unwrap_or_default();
+                    last_err = format!(
+                        "HTTP {code}: {}",
+                        body.chars().take(160).collect::<String>()
+                    );
+                    if (code == 429 || (500..600).contains(&code)) && attempt < self.retry {
+                        self.rate_limit_waits += 1;
+                        let factor = if code == 429 { 2 } else { 1 };
+                        std::thread::sleep(self.backoff * factor);
+                        continue;
+                    }
+                    break;
+                }
+                Err(err) => {
+                    last_err = err.to_string();
+                    if attempt < self.retry {
+                        self.rate_limit_waits += 1;
+                        std::thread::sleep(self.backoff);
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        self.last_request_at = Some(Instant::now());
+        anyhow::bail!("ChileCompra API fallo: {last_err}")
+    }
+
+    fn wait_delay(&mut self) {
+        if let Some(last) = self.last_request_at {
+            let elapsed = last.elapsed();
+            if elapsed < self.delay {
+                self.rate_limit_waits += 1;
+                std::thread::sleep(self.delay - elapsed);
+            }
+        }
+    }
+
+    fn cache_path(&self, req: &ChileRequest) -> PathBuf {
+        self.cache_dir
+            .join(format!("{}.json", sha256_hex(req.cache_key_url.as_bytes())))
+    }
+
+    fn read_cache(&self, req: &ChileRequest) -> Result<Option<Value>> {
+        let path = self.cache_path(req);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let mut text = String::new();
+        File::open(path)?.read_to_string(&mut text)?;
+        let envelope: Value = serde_json::from_str(&text)?;
+        Ok(envelope.get("payload").cloned())
+    }
+
+    fn write_cache(&self, req: &ChileRequest, status_code: u16, payload: &Value) -> Result<()> {
+        let envelope = serde_json::json!({
+            "request_url": req.cache_key_url,
+            "params": req.params,
+            "fetched_at": unix_ts(),
+            "status_code": status_code,
+            "payload_hash": json_sha256(payload),
+            "payload": payload,
+        });
+        let path = self.cache_path(req);
+        fs::write(path, serde_json::to_vec_pretty(&envelope)?)?;
+        Ok(())
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
+
+fn json_sha256(value: &Value) -> String {
+    sha256_hex(serde_json::to_string(value).unwrap_or_default().as_bytes())
+}
+
+fn unix_ts() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn chile_record_candidate(
+    req: &ChileRequest,
+    item: Value,
+    args: &ChileSelectiveArgs,
+) -> Option<ChileSelectedRecord> {
+    let external_id = chile_external_id(&item, req.record_type)?;
+    if !record_matches_filters(&item, args) {
+        return None;
+    }
+    let score = chile_select_score(&item, args);
+    Some(ChileSelectedRecord {
+        record_type: req.record_type.to_string(),
+        dataset_name: req.dataset_name.to_string(),
+        external_id,
+        source_url: req.cache_key_url.clone(),
+        record: item,
+        score,
+    })
+}
+
+fn chile_external_id(item: &Value, record_type: &str) -> Option<String> {
+    let value = if record_type == "purchase_order" {
+        item.get("Codigo").or_else(|| item.get("CodigoExterno"))
+    } else {
+        item.get("CodigoExterno").or_else(|| item.get("Codigo"))
+    }
+    .and_then(Value::as_str)
+    .unwrap_or("")
+    .trim()
+    .to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn record_matches_filters(item: &Value, args: &ChileSelectiveArgs) -> bool {
+    if let Some(buyer) = &args.buyer {
+        if !json_text_contains(item.get("Comprador").unwrap_or(&Value::Null), buyer) {
+            return false;
+        }
+    }
+    if let Some(keyword) = &args.keyword {
+        let haystack = format!(
+            "{} {} {}",
+            item.get("Nombre").and_then(Value::as_str).unwrap_or(""),
+            item.get("Descripcion")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            item.get("Items").map(Value::to_string).unwrap_or_default()
+        );
+        if !contains_folded(&haystack, keyword) {
+            return false;
+        }
+    }
+    if let Some(rut) = &args.supplier_rut {
+        let wanted = normalize_rut_chile(rut).unwrap_or_else(|| rut.trim().to_string());
+        if !contains_folded(&item.to_string(), &wanted) {
+            return false;
+        }
+    }
+    if let Some(name) = &args.supplier_name {
+        let supplier_text = format!(
+            "{} {}",
+            item.get("Proveedor")
+                .map(Value::to_string)
+                .unwrap_or_default(),
+            item.get("Items").map(Value::to_string).unwrap_or_default()
+        );
+        if !contains_folded(&supplier_text, name) {
+            return false;
+        }
+    }
+    true
+}
+
+fn json_text_contains(value: &Value, needle: &str) -> bool {
+    contains_folded(&value.to_string(), needle)
+}
+
+fn contains_folded(value: &str, needle: &str) -> bool {
+    value.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn chile_select_score(item: &Value, args: &ChileSelectiveArgs) -> i64 {
+    let mut score = 0i64;
+    let amount = chile_amount(item) as i64;
+    score += (amount / 1_000_000).min(2_000);
+    let status = item
+        .get("Estado")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    let status_code = item
+        .get("CodigoEstado")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if status.contains("adjudic") || status_code == 8 {
+        score += 600;
+    }
+    if !chile_buyer_name(item).is_empty() {
+        score += 250;
+    }
+    if chile_supplier_name(item).is_some() || chile_supplier_rut(item).is_some() {
+        score += 450;
+    }
+    if chile_record_date(item).is_some() {
+        score += 100;
+    }
+    if args
+        .keyword
+        .as_ref()
+        .is_some_and(|k| contains_folded(&item.to_string(), k))
+    {
+        score += 300;
+    }
+    score
+}
+
+fn chile_has_graph_value(record: &ChileSelectedRecord, fast_demo: bool) -> bool {
+    if !fast_demo {
+        return true;
+    }
+    !record.external_id.is_empty()
+        && !chile_buyer_name(&record.record).is_empty()
+        && (chile_supplier_name(&record.record).is_some()
+            || chile_supplier_rut(&record.record).is_some())
+        && (chile_amount(&record.record) > 0.0)
+}
+
+fn chile_detail_request(candidate: &ChileSelectedRecord, base_url_override: &str) -> ChileRequest {
+    let is_purchase_order = candidate.record_type == "purchase_order";
+    let base = if is_purchase_order {
+        chile_base_url(base_url_override, CHILE_ORDEN_COMPRA_URL)
+    } else {
+        chile_base_url(base_url_override, CHILE_LICITACIONES_URL)
+    };
+    ChileRequest::new(
+        base,
+        if is_purchase_order {
+            "oc_detail"
+        } else {
+            "tender_detail"
+        },
+        if is_purchase_order {
+            "purchase_order"
+        } else {
+            "tender"
+        },
+        vec![("codigo".to_string(), candidate.external_id.clone())],
+    )
+}
+
+fn chile_amount(item: &Value) -> f64 {
+    for key in ["MontoEstimado", "Total", "TotalNeto"] {
+        if let Some(v) = item.get(key).and_then(Value::as_f64) {
+            return v;
+        }
+        if let Some(v) = item
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse().ok())
+        {
+            return v;
+        }
+    }
+    0.0
+}
+
+fn chile_buyer_name(item: &Value) -> String {
+    item.get("Comprador")
+        .and_then(|b| b.get("NombreOrganismo").or_else(|| b.get("NombreUnidad")))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn chile_supplier_name(item: &Value) -> Option<String> {
+    if let Some(name) = item
+        .get("Proveedor")
+        .and_then(|s| s.get("Nombre"))
+        .and_then(Value::as_str)
+    {
+        if !name.trim().is_empty() {
+            return Some(name.trim().to_string());
+        }
+    }
+    item.get("Items")
+        .and_then(|i| i.get("Listado"))
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                item.get("Adjudicacion")
+                    .and_then(|a| a.get("NombreProveedor"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+        })
+}
+
+fn chile_supplier_rut(item: &Value) -> Option<String> {
+    if let Some(rut) = item
+        .get("Proveedor")
+        .and_then(|s| s.get("RutSucursal").or_else(|| s.get("RutProveedor")))
+        .and_then(Value::as_str)
+        .and_then(normalize_rut_chile)
+    {
+        return Some(rut);
+    }
+    item.get("Items")
+        .and_then(|i| i.get("Listado"))
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                item.get("Adjudicacion")
+                    .and_then(|a| a.get("RutProveedor"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_rut_chile)
+            })
+        })
+}
+
+fn chile_record_date(item: &Value) -> Option<String> {
+    item.get("Fechas").and_then(|f| {
+        for key in ["FechaCreacion", "FechaEnvio", "FechaAdjudicacion"] {
+            if let Some(v) = f.get(key).and_then(Value::as_str) {
+                return Some(v.to_string());
+            }
+        }
+        None
+    })
+}
+
+fn upsert_chile_raw_record(client: &mut Client, record: &ChileSelectedRecord) -> Result<()> {
+    let payload = serde_json::json!({
+        "_record_type": record.record_type,
+        "_dataset_name": record.dataset_name,
+        "_source_mode": "selective_api",
+        "record": record.record,
+    });
+    let hash = json_sha256(&payload);
+    client.execute(
+        "INSERT INTO raw_records (source_name, external_id, source_url, payload_hash, payload, status, processed_at) \
+         VALUES ('chilecompra', $1, $2, $3, $4::text::jsonb, 'processed', now()) \
+         ON CONFLICT (source_name, payload_hash) DO UPDATE SET status='processed', processed_at=now()",
+        &[&record.external_id, &record.source_url, &hash, &payload.to_string()],
+    )?;
+    Ok(())
+}
+
+fn chile_count_graph_rows(client: &mut Client) -> Result<(u64, u64)> {
+    let entities: i64 = client
+        .query_one("SELECT count(*)::bigint FROM entities WHERE metadata->>'source_name' = 'chilecompra' OR external_id LIKE 'tender:%' OR external_id LIKE 'purchase_order:%' OR external_id LIKE 'buyer:%' OR external_id LIKE 'supplier:%'", &[])?
+        .get(0);
+    let rels: i64 = client
+        .query_one(
+            "SELECT count(*)::bigint FROM relationships WHERE metadata->>'source_name' = 'chilecompra'",
+            &[],
+        )?
+        .get(0);
+    Ok((entities.max(0) as u64, rels.max(0) as u64))
+}
+
+fn collect_chile_recommendations(db_url: &str) -> Result<Vec<ChileRecommendedEntity>> {
+    let mut client = Client::connect(db_url, NoTls)?;
+    let rows = client.query(
+        r#"
+        SELECT e.id, e.display_name, e.entity_type, count(r.id)::bigint AS degree
+        FROM entities e
+        JOIN relationships r ON r.source_entity_id = e.id OR r.target_entity_id = e.id
+        WHERE e.metadata->>'source_name' = 'chilecompra'
+           OR e.external_id LIKE 'tender:%'
+           OR e.external_id LIKE 'purchase_order:%'
+           OR e.external_id LIKE 'buyer:%'
+           OR e.external_id LIKE 'supplier:%'
+        GROUP BY e.id, e.display_name, e.entity_type
+        ORDER BY CASE e.entity_type WHEN 'public_body' THEN 0 WHEN 'company' THEN 1 WHEN 'purchase_order' THEN 2 WHEN 'tender' THEN 3 ELSE 4 END,
+                 degree DESC,
+                 e.display_name
+        LIMIT 8
+        "#,
+        &[],
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ChileRecommendedEntity {
+            id: row.get(0),
+            display_name: row.get(1),
+            entity_type: row.get(2),
+        })
+        .collect())
+}
+
+fn print_chile_ingestion_summary(
+    stats: &ChileSelectiveStats,
+    recommendations: &[ChileRecommendedEntity],
+) {
+    println!();
+    println!("ChileCompra selective ingestion completed.");
+    println!();
+    println!("Requests made: {}", stats.requests_made);
+    println!("Cache hits: {}", stats.cache_hits);
+    println!("Cache misses: {}", stats.cache_misses);
+    println!("Rate limit waits: {}", stats.rate_limit_waits);
+    println!("Records fetched: {}", stats.records_fetched);
+    println!("Records selected: {}", stats.records_selected);
+    println!("Entities upserted: {}", stats.entities_upserted);
+    println!("Relationships upserted: {}", stats.relationships_upserted);
+    println!("Duplicates skipped: {}", stats.duplicates_skipped);
+    println!("Failed records: {}", stats.failed_records);
+    println!();
+    println!("Recommended entities to test:");
+    if recommendations.is_empty() {
+        println!("No connected ChileCompra entities found yet.");
+    }
+    for (idx, rec) in recommendations.iter().take(3).enumerate() {
+        println!("{}. {}", idx + 1, rec.display_name);
+        println!("   id: {}", rec.id);
+        println!("   type: {}", rec.entity_type);
+        println!(
+            "   graph: http://localhost:3001/api/graph/{}?depth=2",
+            rec.id
+        );
+    }
+}
+
+fn print_chile_dry_run(
+    requests: &[ChileRequest],
+    args: &ChileSelectiveArgs,
+    cache: bool,
+    cache_dir: &Path,
+    filters: &str,
+) {
+    let request_cap = requests.len().min(args.max_requests as usize);
+    println!();
+    println!("ChileCompra selective dry-run.");
+    println!("Endpoints consultaria:");
+    for req in requests.iter().take(request_cap.min(10)) {
+        println!("- {}", req.cache_key_url);
+    }
+    if request_cap > 10 {
+        println!("- ... {} endpoints mas", request_cap - 10);
+    }
+    println!("Requests maximas: {}", args.max_requests);
+    println!("Requests estimadas discovery: {}", request_cap);
+    println!(
+        "Requests estimadas detalle: hasta {}",
+        args.limit.min(args.max_requests)
+    );
+    println!("Filtros: {filters}");
+    println!("Estimacion entidades/relaciones: {} registros seleccionados podrian crear ~{} entidades y ~{} relaciones", args.limit, args.limit * 3, args.limit * 4);
+    println!("Usaria cache: {cache} ({})", cache_dir.display());
+}
+
+fn chile_filter_summary(args: &ChileSelectiveArgs, from: &str, to: &str, limit: u64) -> String {
+    let mut parts = vec![
+        format!("from={from}"),
+        format!("to={to}"),
+        format!("limit={limit}"),
+    ];
+    if args.fast_demo {
+        parts.push("fast_demo=true".to_string());
+    }
+    if let Some(v) = &args.buyer {
+        parts.push(format!("buyer={v}"));
+    }
+    if let Some(v) = &args.keyword {
+        parts.push(format!("keyword={v}"));
+    }
+    if let Some(v) = &args.supplier_rut {
+        parts.push(format!("supplier_rut={v}"));
+    }
+    if let Some(v) = &args.supplier_name {
+        parts.push(format!("supplier_name={v}"));
+    }
+    parts.join(", ")
+}
+
+fn is_chile_auth_error(value: &str) -> bool {
+    value.contains("401") || value.contains("403")
+}
+
+fn run_duplicate_diagnosis_cli(db_url: &str, fix_safe: bool) -> Result<()> {
+    let mut client = Client::connect(db_url, NoTls)?;
+    let mut fixes = Vec::new();
+    if fix_safe {
+        fixes.push(format!(
+            "entity_identifiers exact rows removed: {}",
+            delete_duplicate_entity_identifiers_same_entity(&mut client)?
+        ));
+        fixes.push(format!(
+            "relationships exact rows removed: {}",
+            delete_duplicate_relationships_exact(&mut client)?
+        ));
+        fixes.push(format!(
+            "raw_records exact rows removed: {}",
+            delete_duplicate_raw_records_exact(&mut client)?
+        ));
+    }
+    println!("Duplicate diagnosis completed.");
+    println!();
+    print_entity_identifier_duplicates(&mut client)?;
+    print_entity_name_duplicates(&mut client)?;
+    print_relationship_duplicates(&mut client)?;
+    print_raw_record_duplicates(&mut client)?;
+    print_source_duplicates(&mut client)?;
+    if fix_safe {
+        println!();
+        println!("Fix-safe applied:");
+        for fix in fixes {
+            println!("- {fix}");
+        }
+    }
+    println!();
+    println!("Recommended actions:");
+    println!("1. Keep unique index on entity_identifiers(scheme, value, country_code)");
+    println!("2. Prefer upsert_entity_by_identifier() before name fallback");
+    println!("3. Merge duplicate entities manually or with a reviewed migration; --fix-safe does not merge ambiguous entities");
+    Ok(())
+}
+
+fn print_entity_identifier_duplicates(client: &mut Client) -> Result<()> {
+    println!("Entity identifier duplicates:");
+    let rows = client.query(
+        "SELECT scheme, value, country_code, count(*)::bigint, array_agg(entity_id ORDER BY entity_id)::text \
+         FROM entity_identifiers GROUP BY scheme, value, country_code HAVING count(*) > 1 \
+         ORDER BY count(*) DESC, scheme, value LIMIT 20",
+        &[],
+    )?;
+    if rows.is_empty() {
+        println!("- none");
+    }
+    for row in rows {
+        println!(
+            "- {} / {} / {}: {} entities {}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, i64>(3),
+            row.get::<_, String>(4)
+        );
+    }
+    println!();
+    Ok(())
+}
+
+fn print_entity_name_duplicates(client: &mut Client) -> Result<()> {
+    println!("Entity name duplicates:");
+    let rows = client.query(
+        "SELECT canonical_name, entity_type, country_code, count(*)::bigint, array_agg(id ORDER BY id)::text \
+         FROM entities GROUP BY canonical_name, entity_type, country_code HAVING count(*) > 1 \
+         ORDER BY count(*) DESC, canonical_name LIMIT 20",
+        &[],
+    )?;
+    if rows.is_empty() {
+        println!("- none");
+    }
+    for row in rows {
+        println!(
+            "- \"{}\" / {} / {}: {} entities {}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, i64>(3),
+            row.get::<_, String>(4)
+        );
+    }
+    println!();
+    Ok(())
+}
+
+fn print_relationship_duplicates(client: &mut Client) -> Result<()> {
+    println!("Relationship duplicates:");
+    let rows = client.query(
+        r#"
+        SELECT source_entity_id, target_entity_id, relationship_type, source_id,
+               COALESCE(metadata->>'external_id', metadata->>'infolobby_audience_id', metadata->>'chilecompra_code', metadata->>'external_code', ''),
+               count(*)::bigint,
+               array_agg(id ORDER BY id)::text
+        FROM relationships
+        GROUP BY source_entity_id, target_entity_id, relationship_type, source_id,
+                 COALESCE(metadata->>'external_id', metadata->>'infolobby_audience_id', metadata->>'chilecompra_code', metadata->>'external_code', '')
+        HAVING count(*) > 1
+        ORDER BY count(*) DESC
+        LIMIT 20
+        "#,
+        &[],
+    )?;
+    if rows.is_empty() {
+        println!("- none");
+    }
+    for row in rows {
+        println!(
+            "- source={} target={} type={} source_id={:?} external={} count={} ids={}",
+            row.get::<_, i32>(0),
+            row.get::<_, i32>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<i32>>(3),
+            row.get::<_, String>(4),
+            row.get::<_, i64>(5),
+            row.get::<_, String>(6)
+        );
+    }
+    println!();
+    Ok(())
+}
+
+fn print_raw_record_duplicates(client: &mut Client) -> Result<()> {
+    println!("Raw record duplicates:");
+    let rows = client.query(
+        "SELECT source_name, COALESCE(payload->>'_dataset_name', payload->>'dataset_name', ''), COALESCE(external_id, ''), payload_hash, count(*)::bigint, array_agg(id ORDER BY id)::text \
+         FROM raw_records GROUP BY source_name, COALESCE(payload->>'_dataset_name', payload->>'dataset_name', ''), COALESCE(external_id, ''), payload_hash \
+         HAVING count(*) > 1 ORDER BY count(*) DESC LIMIT 20",
+        &[],
+    )?;
+    if rows.is_empty() {
+        println!("- none");
+    }
+    for row in rows {
+        println!(
+            "- {} / {} / {} / {} count={} ids={}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, String>(3),
+            row.get::<_, i64>(4),
+            row.get::<_, String>(5)
+        );
+    }
+    println!();
+    Ok(())
+}
+
+fn print_source_duplicates(client: &mut Client) -> Result<()> {
+    println!("Source duplicates:");
+    client
+        .batch_execute("SET statement_timeout = '2500ms'")
+        .ok();
+    let rows = match client.query(
+        "WITH grouped AS ( \
+            SELECT source_name, external_id, count(*)::bigint AS n, min(id) AS first_id \
+            FROM sources \
+            WHERE source_name IN ('chilecompra', 'infolobby', 'offshore') AND external_id IS NOT NULL AND external_id <> '' \
+            GROUP BY source_name, external_id HAVING count(*) > 1 \
+            ORDER BY count(*) DESC LIMIT 20 \
+         ) \
+         SELECT g.source_name, COALESCE(s.source_url, ''), g.external_id, g.n, \
+                (SELECT array_agg(id ORDER BY id)::text FROM (SELECT id FROM sources sx WHERE sx.source_name=g.source_name AND sx.external_id=g.external_id ORDER BY id LIMIT 200) limited_ids) \
+         FROM grouped g JOIN sources s ON s.id = g.first_id",
+        &[],
+    ) {
+        Ok(rows) => rows,
+        Err(err) => {
+            println!(
+                "- skipped: sources duplicate scan exceeded safe demo budget or failed: {}",
+                pg_error_detail(&err.into())
+            );
+            println!("- suggested index: sources(source_name, external_id)");
+            client.batch_execute("SET statement_timeout = 0").ok();
+            return Ok(());
+        }
+    };
+    if rows.is_empty() {
+        println!("- none");
+    }
+    for row in rows {
+        println!(
+            "- {} / {} / {} count={} ids={}",
+            row.get::<_, String>(0),
+            trunc(&row.get::<_, String>(1), 80),
+            row.get::<_, String>(2),
+            row.get::<_, i64>(3),
+            row.get::<_, String>(4)
+        );
+    }
+    client.batch_execute("SET statement_timeout = 0").ok();
+    Ok(())
+}
+
+fn delete_duplicate_entity_identifiers_same_entity(client: &mut Client) -> Result<u64> {
+    let n = client.execute(
+        r#"
+        DELETE FROM entity_identifiers d
+        USING entity_identifiers keep
+        WHERE d.id > keep.id
+          AND d.entity_id = keep.entity_id
+          AND d.scheme = keep.scheme
+          AND d.value = keep.value
+          AND d.country_code = keep.country_code
+        "#,
+        &[],
+    )?;
+    Ok(n)
+}
+
+fn delete_duplicate_relationships_exact(client: &mut Client) -> Result<u64> {
+    let n = client.execute(
+        r#"
+        DELETE FROM relationships d
+        USING relationships keep
+        WHERE d.id > keep.id
+          AND d.source_entity_id = keep.source_entity_id
+          AND d.target_entity_id = keep.target_entity_id
+          AND d.relationship_type = keep.relationship_type
+          AND d.source_id IS NOT DISTINCT FROM keep.source_id
+          AND d.metadata = keep.metadata
+        "#,
+        &[],
+    )?;
+    Ok(n)
+}
+
+fn delete_duplicate_raw_records_exact(client: &mut Client) -> Result<u64> {
+    let n = client.execute(
+        r#"
+        DELETE FROM raw_records d
+        USING raw_records keep
+        WHERE d.id > keep.id
+          AND d.source_name = keep.source_name
+          AND d.payload_hash = keep.payload_hash
+          AND COALESCE(d.external_id, '') = COALESCE(keep.external_id, '')
+          AND d.payload = keep.payload
+        "#,
+        &[],
+    )?;
+    Ok(n)
 }
 
 fn run_offshore_rust(opts: OffshoreOptions, tx: Sender<Msg>) -> Result<OffshoreRunSummary> {
@@ -4229,7 +5576,7 @@ fn normalize_tender(
         client,
         buyer_id,
         tender_id,
-        "issued_by",
+        "issued",
         "Organismo comprador publica licitacion",
         source_id,
     )?;
@@ -4341,9 +5688,9 @@ fn normalize_purchase_order(
     )?;
     insert_chile_rel(
         client,
-        po_id,
         buyer_id,
-        "issued_by",
+        po_id,
+        "issued",
         "Orden emitida por organismo",
         source_id,
     )?;
@@ -4447,21 +5794,49 @@ fn upsert_chile_entity(
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let row = client.query_one(
-        r#"
-        INSERT INTO entities (external_id, canonical_name, display_name, entity_type, country_code, metadata, risk_score)
-        VALUES ($1, $2, $3, $4, 'CL', $5::jsonb, $6)
-        ON CONFLICT (external_id) DO UPDATE
-        SET display_name = EXCLUDED.display_name,
-            entity_type = COALESCE(EXCLUDED.entity_type, entities.entity_type),
-            metadata = COALESCE(entities.metadata, '{}'::jsonb) || EXCLUDED.metadata,
-            risk_score = GREATEST(COALESCE(entities.risk_score, 0), COALESCE(EXCLUDED.risk_score, 0)),
-            updated_at = now()
-        RETURNING id
-        "#,
-        &[&external_id, &canonical, &display_name, &entity_type, &metadata.to_string(), &risk_score],
-    )?;
-    let entity_id: i32 = row.get(0);
+    let mut entity_id = None;
+    for (scheme, value) in identifiers {
+        if value.is_empty() {
+            continue;
+        }
+        if let Some(row) = client.query_opt(
+            "SELECT entity_id FROM entity_identifiers WHERE scheme=$1 AND value=$2 AND country_code='CL' ORDER BY id LIMIT 1",
+            &[&scheme.as_str(), &value.as_str()],
+        )? {
+            entity_id = Some(row.get::<_, i32>(0));
+            break;
+        }
+    }
+    if entity_id.is_none() && !external_id.trim().is_empty() {
+        entity_id = client
+            .query_opt(
+                "SELECT id FROM entities WHERE external_id=$1 ORDER BY id LIMIT 1",
+                &[&external_id],
+            )?
+            .map(|row| row.get::<_, i32>(0));
+    }
+    if entity_id.is_none() && !canonical.is_empty() {
+        entity_id = client
+            .query_opt(
+                "SELECT id FROM entities WHERE canonical_name=$1 AND entity_type=$2 AND country_code='CL' ORDER BY id LIMIT 1",
+                &[&canonical, &entity_type],
+            )?
+            .map(|row| row.get::<_, i32>(0));
+    }
+    let entity_id = if let Some(id) = entity_id {
+        client.execute(
+            "UPDATE entities SET display_name=$1, canonical_name=$2, entity_type=$3, metadata=COALESCE(metadata, '{}'::jsonb) || $4::text::jsonb, risk_score=GREATEST(COALESCE(risk_score, 0), $5), updated_at=now() WHERE id=$6",
+            &[&display_name, &canonical, &entity_type, &metadata.to_string(), &risk_score, &id],
+        )?;
+        id
+    } else {
+        client
+            .query_one(
+                "INSERT INTO entities (external_id, canonical_name, display_name, entity_type, country_code, metadata, risk_score) VALUES ($1, $2, $3, $4, 'CL', $5::text::jsonb, $6) RETURNING id",
+                &[&external_id, &canonical, &display_name, &entity_type, &metadata.to_string(), &risk_score],
+            )?
+            .get(0)
+    };
     for (scheme, value) in identifiers {
         if !value.is_empty() {
             client.execute(
@@ -4480,11 +5855,29 @@ fn upsert_chile_source(
     source_url: &str,
     record_type: &str,
 ) -> Result<i32> {
-    let meta = serde_json::json!({"source_type":"public_api","license":CHILECOMPRA_LICENSE,"record_type":record_type,"source_name":"chilecompra"});
+    let meta = serde_json::json!({
+        "institution":"ChileCompra / Mercado Publico",
+        "source_mode":"selective_api",
+        "source_type":"api",
+        "license":CHILECOMPRA_LICENSE,
+        "record_type":record_type,
+        "source_name":"chilecompra",
+        "fetched_at": unix_ts(),
+    });
+    if let Some(row) = client.query_opt(
+        "SELECT id FROM sources WHERE source_name='chilecompra' AND external_id=$1 AND metadata->>'record_type'=$2 ORDER BY id LIMIT 1",
+        &[&external_id, &record_type],
+    )? {
+        let id: i32 = row.get(0);
+        client.execute(
+            "UPDATE sources SET source_url=$1, fetched_at=now(), metadata=COALESCE(metadata, '{}'::jsonb) || $2::text::jsonb WHERE id=$3",
+            &[&source_url, &meta.to_string(), &id],
+        )?;
+        return Ok(id);
+    }
     let row = client.query_one(
         "INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata) \
-         VALUES ('chilecompra', 'public_api', $1, $2, $3, $4::jsonb) \
-         RETURNING id",
+         VALUES ('chilecompra', 'api', $1, $2, $3, $4::text::jsonb) RETURNING id",
         &[&source_url, &external_id, &CHILECOMPRA_LICENSE, &meta.to_string()],
     )?;
     Ok(row.get(0))
@@ -4498,10 +5891,19 @@ fn insert_chile_rel(
     label: &str,
     source_id: i32,
 ) -> Result<()> {
-    let meta = serde_json::json!({"source_name":"chilecompra"});
+    let external_code: Option<String> = client
+        .query_opt("SELECT external_id FROM sources WHERE id=$1", &[&source_id])?
+        .map(|row| row.get(0));
+    let meta = serde_json::json!({
+        "source":"chilecompra",
+        "source_name":"chilecompra",
+        "source_mode":"selective_api",
+        "external_code": external_code,
+        "chilecompra_code": external_code,
+    });
     client.execute(
         "INSERT INTO relationships (source_entity_id, target_entity_id, relationship_type, label, weight, confidence_score, metadata, source_id) \
-         VALUES ($1, $2, $3, $4, 1, 1, $5::jsonb, $6) ON CONFLICT DO NOTHING",
+         VALUES ($1, $2, $3, $4, 1, 1, $5::text::jsonb, $6) ON CONFLICT DO NOTHING",
         &[&src_id, &dst_id, &rel_type, &label, &meta.to_string(), &source_id],
     )?;
     Ok(())

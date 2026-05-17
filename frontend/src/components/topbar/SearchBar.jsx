@@ -105,7 +105,7 @@ export default function SearchBar({ t, lang, onPick }) {
       </div>
 
       {showDropdown && (
-        <div className="search-dropdown">
+        <div className="search-dropdown" role="listbox" id="search-results">
           {searching ? (
             <div className="search-section-title">{lang === 'es' ? 'Buscando…' : 'Searching…'}</div>
           ) : results.length === 0 ? (

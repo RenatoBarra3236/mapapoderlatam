@@ -2,6 +2,7 @@ node_modules/
 venv/
 .venv/
 .uv-cache/
+.cache/
 .env
 dist/
 backend/tui-rs/target/
@@ -10,3 +11,4 @@ backend/tui-rs/target/
 .claude/settings.json
 __pycache__/
 *.pyc
+.pytest_cache/

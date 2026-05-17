@@ -31,7 +31,7 @@ export const I18N = {
     loadingGraph: "Cargando grafo desde la API...",
     backendUnavailable: "Backend no disponible. Usando datos demo locales.",
     usingDemo: "Usando datos demo",
-    usingBackend: "Datos reales desde backend",
+    usingBackend: "Fuente pública verificada",
     partialData: "Datos parciales disponibles",
     noTimeline: "No hay eventos con fecha para esta red.",
     nodeTypes: {
@@ -87,7 +87,7 @@ export const I18N = {
     loadingGraph: "Loading graph from the API...",
     backendUnavailable: "Backend unavailable. Using local demo data.",
     usingDemo: "Using demo data",
-    usingBackend: "Real backend data",
+    usingBackend: "Verified public source",
     partialData: "Partial data available",
     noTimeline: "No dated events are available for this network.",
     nodeTypes: {

@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routes import cases, entities, graph, search
+from routes import cases, chat, entities, graph, search
 from config.settings import get_settings
 
 load_dotenv()
@@ -31,6 +31,7 @@ async def health_check():
     return {"status": "ok", "version": "1.0.0", "database": "postgresql"}
 
 # Rutas
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
 app.include_router(entities.router, prefix="/api/entities", tags=["entities"])
