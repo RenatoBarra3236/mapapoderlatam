@@ -1,130 +1,89 @@
-# Mapa de Poder Político — LATAM
+# Mapa de Poder LATAM
 
-Plataforma de transparencia que visualiza la red de conexiones entre **funcionarios, empresas y contratos públicos** en Latinoamérica.
+Plataforma de transparencia para visualizar redes entre personas, empresas, organismos públicos, contratos, audiencias, transferencias y otras fuentes públicas.
 
----
+El frontend React/Vite mantiene la demo visual existente y ahora puede consumir la API real. Si el backend no responde o no hay datos, conserva `demoData.js` como fallback.
 
-## Estructura del proyecto
+## Stack
 
-```
-mapapoderlatam/
-├── backend/
-│   ├── config/
-│   │   ├── db.js               ← Conexión a PostgreSQL
-│   │   └── schema.sql          ← Tablas nodes, edges y vista node_degree
-│   └── src/
-│       ├── index.js            ← Servidor Express
-│       ├── routes/
-│       │   ├── search.js       ← GET /api/search?q=nombre
-│       │   └── graph.js        ← GET /api/graph/:id?depth=2
-│       ├── controllers/
-│       │   ├── searchController.js
-│       │   └── graphController.js
-│       └── utils/
-│           └── seed.js         ← Datos de ejemplo para demo
-│
-├── frontend/
-│   └── src/
-│       ├── App.jsx             ← Layout principal
-│       ├── components/
-│       │   ├── graph/
-│       │   │   └── GraphCanvas.jsx   ← Visualización Vis.js
-│       │   └── ui/
-│       │       ├── SearchBar.jsx     ← Búsqueda con autocomplete
-│       │       └── NodeDetail.jsx    ← Panel lateral de detalle
-│       ├── hooks/
-│       │   ├── useGraph.js     ← Carga el subgrafo desde la API
-│       │   └── useSearch.js    ← Búsqueda con debounce
-│       └── services/
-│           └── api.js          ← Axios configurado
-│
-└── data/
-    └── scripts/
-        └── ingest_chilecompra.js  ← Ingesta desde API de ChileCompra
-```
+- Backend: FastAPI, SQLAlchemy sync, PostgreSQL, Alembic
+- Frontend: React, Vite, CSS/Tailwind existente
+- Ingesta: conectores Python en `backend/ingestion`
+- IA: stub intencional; no se llaman APIs de IA reales
 
----
-
-## Setup rápido
-
-### 1. Base de datos
+## Ejecución
 
 ```bash
-# Crear la base de datos
-createdb mapapoderlatam
+# 1. PostgreSQL
+docker compose -f docker-compose.dev.yml up -d postgres
 
-# Aplicar el schema
-psql mapapoderlatam < backend/config/schema.sql
+# 2. Backend
+cd backend
+UV_CACHE_DIR=../.uv-cache uv python pin 3.12
+UV_CACHE_DIR=../.uv-cache uv venv --clear venv --python 3.12
+UV_CACHE_DIR=../.uv-cache uv pip install -r requirements.txt --python venv/bin/python
+cp .env.example .env
+venv/bin/alembic upgrade head
+venv/bin/python -m scripts.seed_dev
+venv/bin/python -m uvicorn app:app --reload --port 3001
+
+# 3. Frontend
+cd ../frontend
+npm install
+npm run dev
 ```
 
-### 2. Backend
+URLs:
+
+- API: `http://localhost:3001`
+- Frontend: `http://localhost:5173`
+- Swagger: `http://localhost:3001/docs`
+
+## Endpoints
+
+- `GET /api/health`
+- `GET /api/search?q=municipalidad&limit=10`
+- `GET /api/entities/{entity_id}`
+- `GET /api/graph/{entity_id}?depth=2`
+- `GET /api/cases`
+- `GET /api/cases/{case_id}`
+
+## Datos e ingesta
+
+El seed de desarrollo carga fixtures marcados con:
+
+- `metadata.is_demo = true`
+- `metadata.source_mode = "fixture"`
+
+ChileCompra está implementado como primer conector. Para API real configura:
+
+```env
+CHILECOMPRA_TICKET=
+```
+
+Y ejecuta:
 
 ```bash
 cd backend
-cp .env.example .env
-# Editar .env con tu DATABASE_URL
-
-npm install
-npm run seed   # Carga datos de ejemplo
-npm run dev    # Servidor en http://localhost:3001
+venv/bin/python -m scripts.ingest chilecompra --codigo 2424-12-LP24
 ```
 
-### 3. Frontend
+Sin ticket, el conector falla con un mensaje explícito. Para fixture de desarrollo:
 
 ```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev    # App en http://localhost:5173
+venv/bin/python -m scripts.ingest chilecompra --fixture
 ```
 
----
+InfoLobby, InfoProbidad, Registro de Colaboradores y SERVEL están preparados como conectores con pendientes concretos de endpoint/dataset oficial.
 
-## API
+## Configuración
 
-| Endpoint | Descripción |
-|---|---|
-| `GET /api/search?q=nombre` | Búsqueda fulltext de nodos |
-| `GET /api/graph/:id?depth=2` | Subgrafo hasta N grados |
-| `GET /api/graph/:id/stats` | Estadísticas del nodo |
+Ver `backend/.env.example` y `frontend/.env.example`.
 
-### Ejemplo de respuesta — `/api/graph/1?depth=2`
+`DATABASE_URL` esperado:
 
-```json
-{
-  "nodes": [
-    { "id": 1, "type": "person", "name": "Carlos Fuentes Muñoz", "is_root": true, "risk_score": 40 },
-    { "id": 5, "type": "company", "name": "Constructora Los Andes SpA", "is_root": false }
-  ],
-  "edges": [
-    { "source_id": 1, "target_id": 5, "type": "owns", "label": "Socio fundador (40%)" }
-  ]
-}
+```env
+DATABASE_URL=postgresql+psycopg://mapapoder:mapapoder@localhost:5432/mapapoderlatam
 ```
 
----
-
-## Tipos de nodos y relaciones
-
-**Nodos:** `person` (morado) · `company` (verde) · `contract` (naranja)
-
-**Relaciones:** `owns` · `awarded` · `signed` · `donated_to` · `family_of` · `former_role`
-
----
-
-## Fuentes de datos LATAM
-
-| País | Portal | Tipo de datos |
-|---|---|---|
-| Chile | api.mercadopublico.cl | Contratos públicos |
-| Perú | datosabiertos.gob.pe | Licitaciones SEACE |
-| Colombia | secop.gov.co | Contratos SECOP I/II |
-| México | compranet.gob.mx | Compranet |
-| Brasil | compras.gov.br | ComprasNet |
-
----
-
-## Pitch en 30 segundos
-
-> "Esta información ya existe, dispersa en portales públicos. Nosotros la conectamos.
-> Ingresa cualquier nombre y ve en segundos si hay conflictos de interés que ningún periodista había podido visualizar antes."
+`ANTHROPIC_API_KEY` puede existir, pero no es requerida ni usada por endpoints de producto en esta fase.

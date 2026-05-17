@@ -11,7 +11,7 @@ async def get_graph(
     depth: int = 2,
     db: Session = Depends(get_db)
 ):
-    """Obtiene subgrafo centrado en un nodo."""
+    """Obtiene subgrafo centrado en una entidad."""
     result = await get_subgraph(db, node_id, depth)
     if not result["nodes"]:
         raise HTTPException(status_code=404, detail="Nodo no encontrado")

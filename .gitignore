@@ -1,6 +1,11 @@
 node_modules/
+venv/
+.venv/
+.uv-cache/
 .env
 dist/
 *.log
 .DS_Store
 .claude/settings.json
+__pycache__/
+*.pyc

@@ -1,52 +1,68 @@
-from sqlalchemy import text
-from sqlalchemy.orm import Session
-from models.node import Node
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, selectinload
+
+from models import Entity, EntityIdentifier
+
+
+def _entity_result(entity: Entity, matched_identifiers: list[str] | None = None) -> dict:
+    return {
+        "id": str(entity.id),
+        "external_id": entity.external_id,
+        "name": entity.display_name,
+        "type": entity.entity_type,
+        "country": entity.country_code,
+        "riskScore": entity.risk_score,
+        "risk_score": entity.risk_score,
+        "matchedIdentifiers": matched_identifiers or [],
+        "metadata": entity.entity_metadata or {},
+    }
+
 
 async def search(
     db: Session,
     q: str,
-    node_type: str = None,
-    country: str = None,
-    limit: int = 10
+    node_type: str | None = None,
+    country: str | None = None,
+    limit: int = 10,
 ):
-    """
-    Búsqueda full-text en nodos de MySQL.
-    Soporta búsqueda por nombre con LIKE.
-    """
-    if len(q) < 2:
+    if len(q.strip()) < 2:
         return {"error": "Query debe tener al menos 2 caracteres"}, 400
 
-    query = db.query(Node)
+    query_text = q.strip()
+    identifier_matches = (
+        db.query(EntityIdentifier)
+        .filter(EntityIdentifier.value.ilike(f"%{query_text}%"))
+        .limit(limit)
+        .all()
+    )
+    matched_by_entity: dict[int, list[str]] = {}
+    for identifier in identifier_matches:
+        matched_by_entity.setdefault(identifier.entity_id, []).append(f"{identifier.scheme}:{identifier.value}")
 
-    # Búsqueda por nombre (LIKE)
-    query = query.filter(Node.name.ilike(f"%{q}%"))
-
-    # Filtros opcionales
+    query = db.query(Entity).options(selectinload(Entity.identifiers))
+    query = query.filter(
+        or_(
+            Entity.canonical_name.ilike(f"%{query_text}%"),
+            Entity.display_name.ilike(f"%{query_text}%"),
+            Entity.id.in_(matched_by_entity.keys()) if matched_by_entity else False,
+        )
+    )
     if node_type:
-        query = query.filter(Node.type == node_type)
+        query = query.filter(Entity.entity_type == node_type)
     if country:
-        query = query.filter(Node.country == country)
+        query = query.filter(Entity.country_code == country.upper())
 
-    # Orden por risk_score (descendente) y nombre (ascendente)
-    results = query.order_by(
-        Node.risk_score.desc(),
-        Node.name.asc()
-    ).limit(limit).all()
+    similarity_rank = func.greatest(
+        func.similarity(Entity.canonical_name, query_text),
+        func.similarity(Entity.display_name, query_text),
+    )
+    entities = (
+        query.order_by(similarity_rank.desc(), Entity.risk_score.desc(), Entity.display_name.asc())
+        .limit(limit)
+        .all()
+    )
 
-    return {
-        "query": q,
-        "results": [
-            {
-                "id": r.id,
-                "external_id": r.external_id,
-                "type": r.type,
-                "name": r.name,
-                "country": r.country,
-                "metadata": r.metadata or {},
-                "risk_score": r.risk_score,
-                "created_at": r.created_at.isoformat() if r.created_at else None
-            }
-            for r in results
-        ],
-        "total": len(results)
-    }
+    return [
+        _entity_result(entity, matched_by_entity.get(entity.id))
+        for entity in entities
+    ]

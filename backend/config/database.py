@@ -7,7 +7,7 @@ settings = get_settings()
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    echo=settings.NODE_ENV == "development"
+    echo=settings.ENVIRONMENT == "development"
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

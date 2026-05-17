@@ -1,37 +1,20 @@
 #!/usr/bin/env python3
 """
-Script para inicializar la base de datos MySQL.
-Ejecutar: python init_db.py
+Helper de desarrollo. En producción usa Alembic:
+
+    alembic upgrade head
 """
 
-import sys
-import os
-import subprocess
-from pathlib import Path
+from config.database import Base, engine
+from models import Entity, EntityIdentifier, IngestionRun, RawRecord, Relationship, RiskFlag, Source
+from scripts.seed_dev import seed
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from config.settings import get_settings
-from config.database import engine, Base
-from models.node import Node
-from models.edge import Edge
-from utils.seed import seed_database
 
 def init_db():
-    """Crea las tablas y carga datos iniciales."""
-    print("🔄 Inicializando base de datos...")
-
-    # Crear tablas
-    print("📋 Creando tablas...")
     Base.metadata.create_all(bind=engine)
-    print("✓ Tablas creadas")
+    seed()
+    print("Base de desarrollo inicializada. Para producción usa: alembic upgrade head")
 
-    # Cargar datos de ejemplo
-    print("🌱 Cargando datos de ejemplo...")
-    seed_database()
-
-    print("\n✅ Base de datos inicializada correctamente")
-    print("   Puedes iniciar el servidor con: python -m uvicorn app:app --reload")
 
 if __name__ == "__main__":
     init_db()

@@ -12,6 +12,7 @@ import TweaksPanel from '../components/tweaks/TweaksPanel';
 import { applyPalette } from '../components/tweaks/palettes';
 import { I18N } from '../lib/i18n';
 import { DEMO_CASES } from '../lib/demoData';
+import { getEntityGraph } from '../lib/api';
 
 const STORAGE_KEY = 'mapapoder.tweaks';
 
@@ -29,6 +30,7 @@ export default function MapaPage() {
   const [palette, setPalette] = useState(saved.palette || 'editorial');
   const [density, setDensity] = useState(saved.density || 'regular');
   const [caseId, setCaseId] = useState(null);
+  const [apiCaseData, setApiCaseData] = useState(null);
   const [view, setView] = useState('neural');
   const [tweaksOpen, setTweaksOpen] = useState(false);
 
@@ -46,7 +48,23 @@ export default function MapaPage() {
   }, [lang, theme, palette, density]);
 
   const t = I18N[lang];
-  const caseData = caseId ? DEMO_CASES[caseId] : null;
+  const caseData = apiCaseData || (caseId ? DEMO_CASES[caseId] : null);
+
+  async function pickCase(selection) {
+    const selected = typeof selection === 'object' ? selection : { id: selection };
+    setApiCaseData(null);
+    if (selected.fromApi || selected.entityId) {
+      try {
+        const graph = await getEntityGraph(selected.entityId || selected.id, 2);
+        setCaseId(null);
+        setApiCaseData(graph);
+        return;
+      } catch {
+        setApiCaseData(null);
+      }
+    }
+    setCaseId(selected.id);
+  }
 
   return (
     <div className="app">
@@ -56,7 +74,7 @@ export default function MapaPage() {
         theme={theme}
         setTheme={setTheme}
         t={t}
-        onPickCase={setCaseId}
+        onPickCase={pickCase}
         onOpenTweaks={() => setTweaksOpen(v => !v)}
       />
       <main className={`main ${caseData ? '' : 'empty-mode'}`}>
@@ -71,7 +89,7 @@ export default function MapaPage() {
               <ChatbotDrawer caseData={caseData} lang={lang} />
             </>
           ) : (
-            <EmptyState t={t} lang={lang} onPick={setCaseId} />
+            <EmptyState t={t} lang={lang} onPick={pickCase} />
           )}
         </div>
         {caseData && <RightPanel caseData={caseData} lang={lang} t={t} />}

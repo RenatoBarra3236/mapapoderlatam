@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SEARCH_INDEX } from '../../lib/demoData';
+import { searchEntities } from '../../lib/api';
 
 export default function SearchBar({ t, lang, onPick }) {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
+  const [apiResults, setApiResults] = useState([]);
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -20,18 +22,33 @@ export default function SearchBar({ t, lang, onPick }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function runSearch() {
+      if (!debounced) {
+        setApiResults([]);
+        return;
+      }
+      const results = await searchEntities(debounced, { limit: 8 });
+      if (!cancelled) setApiResults(results);
+    }
+    runSearch();
+    return () => { cancelled = true; };
+  }, [debounced]);
+
   const results = useMemo(() => {
     if (!debounced) return [];
+    if (apiResults.length > 0) return apiResults;
     return SEARCH_INDEX.filter(r =>
       r.name.toLowerCase().includes(debounced) ||
       r.subtitle.toLowerCase().includes(debounced)
     ).slice(0, 8);
-  }, [debounced]);
+  }, [apiResults, debounced]);
 
   const showDropdown = open && (query.length > 0);
 
-  function pick(caseId) {
-    onPick(caseId);
+  function pick(result) {
+    onPick(result);
     setQuery('');
     setOpen(false);
   }
@@ -67,7 +84,7 @@ export default function SearchBar({ t, lang, onPick }) {
             <>
               <div className="search-section-title">{t.suggested}</div>
               {results.map((r, i) => (
-                <button key={i} className="search-result" onClick={() => pick(r.id)}>
+                <button key={i} className="search-result" onClick={() => pick(r)}>
                   <span className={`type-dot ${r.type}`} />
                   <span>
                     <div className="name">{r.name}</div>
