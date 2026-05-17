@@ -803,6 +803,38 @@ a.table-source-link:hover { color: var(--ink); border-color: var(--ink-3); }
   text-wrap: pretty;
 }
 
+/* pulse-dot active state (while loading) */
+.pulse-dot--active {
+  animation: pulseDotFast 0.8s ease-in-out infinite;
+}
+@keyframes pulseDotFast {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* Skeleton loader for AI summary */
+.ai-summary-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+.skeleton-line {
+  height: 13px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-line--full  { width: 100%; }
+.skeleton-line--wide  { width: 88%; }
+.skeleton-line--mid   { width: 72%; }
+.skeleton-line--narrow{ width: 55%; }
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ============ FLAG CARDS ============ */
 .flag-card {
   background: var(--surface);

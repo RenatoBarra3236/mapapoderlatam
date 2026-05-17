@@ -202,6 +202,10 @@ function buildChatContext(caseData, lang) {
   };
 }
 
+export async function getAISummary(entityId, lang = 'es') {
+  return request(`/summary/${entityId}`, { params: { lang } });
+}
+
 export async function chatWithProfile(message, caseData, lang, history = []) {
   const context = buildChatContext(caseData, lang);
   return requestPost('/chat', { message, context, lang, history });

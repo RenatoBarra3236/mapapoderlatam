@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routes import cases, chat, entities, graph, search
+from routes import cases, chat, entities, graph, search, summary
 from config.settings import get_settings
 
 load_dotenv()
@@ -36,6 +36,7 @@ app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
 app.include_router(entities.router, prefix="/api/entities", tags=["entities"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
+app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
 
 if __name__ == "__main__":
     import uvicorn

@@ -1198,6 +1198,13 @@ struct InfolobbyFastSelection {
     passive_codes: HashSet<String>,
 }
 
+#[derive(Clone)]
+struct InfolobbyTailRecord {
+    code: String,
+    organism: String,
+    date: String,
+}
+
 fn normalize_offshore_country_codes(values: &[String]) -> Vec<String> {
     let source: Vec<String> = if values.is_empty() {
         LATAM_ISO3.iter().map(|v| v.to_string()).collect()
@@ -1354,6 +1361,13 @@ fn run_infolobby_fast_demo(
     opts: FastInfolobbyOptions,
     tx: Sender<Msg>,
 ) -> Result<InfolobbyRunSummary> {
+    if opts.drop_oldest_percent > 0
+        && opts.skip_raw_records
+        && opts.focus.is_none()
+        && opts.audience_ids.is_none()
+    {
+        return run_infolobby_tail_demo(opts, tx);
+    }
     let mut selection = select_fast_infolobby_audiences(&opts)?;
     retain_recent_infolobby_selection(&opts, &mut selection)?;
     gather_fast_infolobby_linked_codes(&opts.data_dir, &mut selection)?;
@@ -1508,6 +1522,16 @@ fn select_recent_infolobby_audiences(
     limit: usize,
     audience_ids: &mut HashSet<String>,
 ) -> Result<()> {
+    for rec in read_recent_infolobby_tail_records(data_dir, limit)? {
+        audience_ids.insert(rec.code);
+    }
+    Ok(())
+}
+
+fn read_recent_infolobby_tail_records(
+    data_dir: &Path,
+    limit: usize,
+) -> Result<Vec<InfolobbyTailRecord>> {
     let path = data_dir.join("audiencias.csv");
     let mut file = File::open(&path)?;
     let len = file.metadata()?.len();
@@ -1538,15 +1562,180 @@ fn select_recent_infolobby_audiences(
             continue;
         }
         let date = row.get(4).unwrap_or("").to_string();
+        let organism = row.get(3).unwrap_or("").trim().to_string();
         if !date.is_empty() {
-            rows.push((date, code));
+            rows.push((
+                date.clone(),
+                InfolobbyTailRecord {
+                    code,
+                    organism,
+                    date,
+                },
+            ));
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, code) in rows.into_iter().take(limit) {
-        audience_ids.insert(code);
+    Ok(rows.into_iter().take(limit).map(|(_, rec)| rec).collect())
+}
+
+fn run_infolobby_tail_demo(
+    opts: FastInfolobbyOptions,
+    _tx: Sender<Msg>,
+) -> Result<InfolobbyRunSummary> {
+    let records =
+        read_recent_infolobby_tail_records(&opts.data_dir, opts.limit_audiences.max(1) as usize)?;
+    if opts.dry_run {
+        println!(
+            "InfoLobby tail dry-run: {} audiencias recientes desde audiencias.csv",
+            records.len()
+        );
+        return Ok(InfolobbyRunSummary {
+            audiences_selected: records.len() as u64,
+            ..InfolobbyRunSummary::default()
+        });
     }
+    let mut client = Client::connect(&opts.db_url, NoTls)?;
+    client.batch_execute("SET statement_timeout = 0")?;
+    let run_id: i32 = client
+        .query_one(
+            "INSERT INTO ingestion_runs (source_name, status, metadata) VALUES ('infolobby', 'running', $1::text::jsonb) RETURNING id",
+            &[&serde_json::json!({"mode":"tail_fast_demo","limit":opts.limit_audiences,"drop_oldest_percent":opts.drop_oldest_percent}).to_string()],
+        )?
+        .get(0);
+    let result = (|| -> Result<InfolobbyRunSummary> {
+        client.batch_execute("BEGIN")?;
+        let mut entities = 0u64;
+        let mut rels = 0u64;
+        for rec in &records {
+            if rec.organism.trim().is_empty() || rec.code.trim().is_empty() {
+                continue;
+            }
+            let source_id = upsert_infolobby_tail_source(&mut client, rec)?;
+            let body_id = upsert_simple_entity(
+                &mut client,
+                &format!("infolobby:public_body:{}", canonicalize(&rec.organism)),
+                &rec.organism,
+                "public_body",
+                &serde_json::json!({"source_name":"infolobby","source_mode":"tail_fast_demo"}),
+            )?;
+            let aud_id = upsert_simple_entity(
+                &mut client,
+                &format!("infolobby:audience:{}", rec.code),
+                &format!("Audiencia InfoLobby {}", rec.code),
+                "audience",
+                &serde_json::json!({"source_name":"infolobby","source_mode":"tail_fast_demo","audience_code":rec.code,"date":rec.date}),
+            )?;
+            insert_simple_relationship(
+                &mut client,
+                body_id,
+                aud_id,
+                "held_audience",
+                "Organismo registra audiencia",
+                source_id,
+                &serde_json::json!({"source_name":"infolobby","source_mode":"tail_fast_demo","audience_code":rec.code,"date":rec.date}),
+            )?;
+            entities += 2;
+            rels += 1;
+        }
+        client.batch_execute("COMMIT")?;
+        Ok(InfolobbyRunSummary {
+            audiences_selected: records.len() as u64,
+            rows_copied: records.len() as u64,
+            entities_upserted: entities,
+            relationships_upserted: rels,
+        })
+    })();
+    match result {
+        Ok(summary) => {
+            finish_simple_run(
+                &mut client,
+                run_id,
+                "completed",
+                summary.rows_copied,
+                summary.audiences_selected,
+                None,
+            )?;
+            Ok(summary)
+        }
+        Err(err) => {
+            let _ = client.batch_execute("ROLLBACK");
+            let _ = finish_simple_run(&mut client, run_id, "failed", 0, 0, Some(&err.to_string()));
+            Err(err)
+        }
+    }
+}
+
+fn upsert_infolobby_tail_source(client: &mut Client, rec: &InfolobbyTailRecord) -> Result<i32> {
+    let external_id = format!("infolobby:audience:{}", rec.code);
+    if let Some(row) = client.query_opt(
+        "SELECT id FROM sources WHERE source_name='infolobby' AND external_id=$1 ORDER BY id LIMIT 1",
+        &[&external_id],
+    )? {
+        return Ok(row.get(0));
+    }
+    let meta = serde_json::json!({
+        "source_mode":"tail_fast_demo",
+        "dataset":"audiencias",
+        "audience_code": rec.code,
+        "date": rec.date,
+    });
+    Ok(client
+        .query_one(
+            "INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata) VALUES ('infolobby', 'public_dataset', $1, $2, $3, $4::text::jsonb) RETURNING id",
+            &[&INFOLOBBY_SOURCE_URL, &external_id, &INFOLOBBY_LICENSE, &meta.to_string()],
+        )?
+        .get(0))
+}
+
+fn upsert_simple_entity(
+    client: &mut Client,
+    external_id: &str,
+    display_name: &str,
+    entity_type: &str,
+    metadata: &Value,
+) -> Result<i32> {
+    let canonical = canonicalize(display_name);
+    if let Some(row) = client.query_opt(
+        "SELECT id FROM entities WHERE external_id=$1 ORDER BY id LIMIT 1",
+        &[&external_id],
+    )? {
+        let id: i32 = row.get(0);
+        client.execute(
+            "UPDATE entities SET display_name=$1, canonical_name=$2, metadata=COALESCE(metadata, '{}'::jsonb) || $3::text::jsonb, updated_at=now() WHERE id=$4",
+            &[&display_name, &canonical, &metadata.to_string(), &id],
+        )?;
+        return Ok(id);
+    }
+    Ok(client
+        .query_one(
+            "INSERT INTO entities (external_id, canonical_name, display_name, entity_type, country_code, metadata, risk_score) VALUES ($1, $2, $3, $4, 'CL', $5::text::jsonb, 0) RETURNING id",
+            &[&external_id, &canonical, &display_name, &entity_type, &metadata.to_string()],
+        )?
+        .get(0))
+}
+
+fn insert_simple_relationship(
+    client: &mut Client,
+    src: i32,
+    dst: i32,
+    typ: &str,
+    label: &str,
+    source_id: i32,
+    metadata: &Value,
+) -> Result<()> {
+    client.execute(
+        "INSERT INTO relationships (source_entity_id, target_entity_id, relationship_type, label, weight, confidence_score, metadata, source_id) VALUES ($1, $2, $3, $4, 1, 1, $5::text::jsonb, $6) ON CONFLICT DO NOTHING",
+        &[&src, &dst, &typ, &label, &metadata.to_string(), &source_id],
+    )?;
     Ok(())
+}
+
+fn canonicalize(value: &str) -> String {
+    value
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn retain_recent_infolobby_selection(

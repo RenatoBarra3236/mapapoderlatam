@@ -120,8 +120,8 @@ async def get_subgraph(db: Session, node_id: int, depth: int = 2):
             for source in sources
         ],
         "summary": {
-            "es": f"Grafo centrado en {center.display_name}. IA real no habilitada; resumen generado desde datos estructurados.",
-            "en": f"Graph centered on {center.display_name}. Real AI is not enabled; summary generated from structured data.",
+            "es": f"Red centrada en {center.display_name}.",
+            "en": f"Network centered on {center.display_name}.",
         },
     }
 
