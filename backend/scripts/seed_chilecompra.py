@@ -1,12 +1,15 @@
 import argparse
 import os
 
+from dotenv import load_dotenv
+
 from config.database import SessionLocal
 from ingestion.registry import get_connector
 from ingestion.runners import run_connector
 
 
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Seed real ChileCompra data from Mercado Publico API")
     parser.add_argument("--licitacion", action="append", default=[], help="Codigo de licitacion Mercado Publico. Can be repeated.")
     parser.add_argument("--orden-compra", action="append", default=[], help="Codigo de orden de compra Mercado Publico. Can be repeated.")

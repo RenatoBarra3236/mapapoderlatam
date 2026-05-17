@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     NODE_ENV: str = "development"
     BACKEND_CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     CHILECOMPRA_TICKET: str = ""
+    CHILECOMPRA_SEED_TENDER_CODES: str = ""
+    CHILECOMPRA_SEED_OC_CODES: str = ""
+    CHILECOMPRA_DAILY_BUDGET: int = 9000
+    CHILECOMPRA_NIGHT_START: str = "22:00"
+    CHILECOMPRA_NIGHT_END: str = "07:00"
     INFOLOBBY_ENDPOINT: str = ""
     INFOPROBIDAD_ENDPOINT: str = ""
     SERVEL_DATA_URL: str = ""

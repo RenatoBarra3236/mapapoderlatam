@@ -27,6 +27,15 @@ Ingesta ChileCompra:
 ```bash
 CHILECOMPRA_TICKET=... CHILECOMPRA_SEED_TENDER_CODES=2424-12-LP24 python -m scripts.seed_chilecompra
 CHILECOMPRA_TICKET=... python -m scripts.ingest chilecompra --kind ordenes_compra --codigo 2424-77-SE24
+CHILECOMPRA_TICKET=... python -m scripts.chilecompra_worker --daily-budget 9000 --hydration-budget 500
+```
+
+Ingesta InfoLobby desde CSV locales:
+
+```bash
+python -m scripts.seed_data_tui
+python -m scripts.ingest infolobby --file audiencias --limit 100
+python -m scripts.ingest infolobby --data-dir data/infolobby --batch-size 1000
 ```
 
 Sin ticket, solo usa fixtures explícitos de desarrollo con `--fixture`. IA queda como stub; `ANTHROPIC_API_KEY` no es requerida.

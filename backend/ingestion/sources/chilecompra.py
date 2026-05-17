@@ -1,14 +1,51 @@
 import json
 import os
+import socket
+import time
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from collections.abc import Callable
 
 from ingestion.base import BaseConnector, NormalizedEntity, NormalizedGraph, NormalizedRelationship, RawRecordInput
 from ingestion.normalizers import normalize_rut
 
 
-LICITACIONES_URL = "http://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
-ORDEN_COMPRA_URL = "http://api.mercadopublico.cl/servicios/v1/publico/OrdenCompra.json"
+LICITACIONES_URL = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
+ORDEN_COMPRA_URL = "https://api.mercadopublico.cl/servicios/v1/publico/OrdenCompra.json"
+ORDENES_COMPRA_URL = "https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json"
+
+_request_observer: Callable[[str], None] | None = None
+
+
+def set_request_observer(observer: Callable[[str], None] | None) -> None:
+    global _request_observer
+    _request_observer = observer
+
+
+def _notify_request(safe_url: str) -> None:
+    if _request_observer is None:
+        return
+    try:
+        _request_observer(safe_url)
+    except Exception:
+        pass
+
+
+class ChileCompraError(RuntimeError):
+    """Base error for ChileCompra HTTP/API failures."""
+
+
+class ChileCompraTransientError(ChileCompraError):
+    """Temporary transport or server-side failure worth retrying later."""
+
+    def __init__(self, message: str, *, quota_counted: bool = False):
+        super().__init__(message)
+        self.quota_counted = quota_counted
+
+
+class ChileCompraPermanentError(ChileCompraError):
+    """Non-retryable API failure such as invalid parameters or auth errors."""
 
 FIXTURE_TENDER = {
     "CodigoExterno": "2424-12-LP24",
@@ -99,16 +136,25 @@ FIXTURE_PURCHASE_ORDER = {
 class ChileCompraConnector(BaseConnector):
     source_name = "chilecompra"
 
+    def __init__(self, retries: int | None = None, backoff_seconds: float | None = None, timeout_seconds: float | None = None):
+        self.retries = retries if retries is not None else int(os.getenv("CHILECOMPRA_RETRIES", "3"))
+        self.backoff_seconds = backoff_seconds if backoff_seconds is not None else float(os.getenv("CHILECOMPRA_BACKOFF_SECONDS", "1.5"))
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else float(os.getenv("CHILECOMPRA_TIMEOUT_SECONDS", "30"))
+
     def fetch(self, **kwargs) -> list[RawRecordInput]:
         ticket = kwargs.get("ticket") or os.getenv("CHILECOMPRA_TICKET")
         use_fixture = kwargs.get("fixture", False)
         kind = kwargs.get("kind") or "licitaciones"
         codes = _as_list(kwargs.get("codigos") or kwargs.get("codigo"))
+        fecha = kwargs.get("fecha")
+        estado = kwargs.get("estado")
 
         if use_fixture:
             return self._fixture_records(kind)
         if not ticket:
             raise RuntimeError("CHILECOMPRA_TICKET no configurado. La API documentada requiere ticket y codigo.")
+        if fecha or estado:
+            return self.discover(kind=kind, ticket=ticket, fecha=fecha, estado=estado)
         if not codes:
             raise RuntimeError("Debe indicar al menos un codigo de licitacion u orden de compra para ChileCompra.")
 
@@ -118,6 +164,16 @@ class ChileCompraConnector(BaseConnector):
                 records.extend(self._fetch_endpoint(LICITACIONES_URL, code, ticket, "tender"))
             if kind in ("ordenes_compra", "oc", "all"):
                 records.extend(self._fetch_endpoint(ORDEN_COMPRA_URL, code, ticket, "purchase_order"))
+        return records
+
+    def discover(self, kind: str, ticket: str, fecha: str | None = None, estado: str | None = None) -> list[RawRecordInput]:
+        if not fecha and not estado:
+            raise RuntimeError("Discovery ChileCompra requiere fecha=DDMMYYYY o estado.")
+        records: list[RawRecordInput] = []
+        if kind in ("licitaciones", "all"):
+            records.extend(self._discover_endpoint(LICITACIONES_URL, "tender", ticket, fecha, estado))
+        if kind in ("ordenes_compra", "oc", "all"):
+            records.extend(self._discover_endpoint(ORDENES_COMPRA_URL, "purchase_order", ticket, fecha, estado))
         return records
 
     def normalize(self, raw_record: RawRecordInput) -> NormalizedGraph:
@@ -131,8 +187,7 @@ class ChileCompraConnector(BaseConnector):
         params = {"codigo": code, "ticket": ticket}
         url = f"{base_url}?{urlencode(params)}"
         safe_url = f"{base_url}?{urlencode({'codigo': code, 'ticket': '***'})}"
-        with urlopen(url, timeout=30) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+        response_payload = self._get_json(url, safe_url)
         listed = _as_list(response_payload.get("Listado") or response_payload.get("listado"))
         return [
             RawRecordInput(
@@ -143,6 +198,27 @@ class ChileCompraConnector(BaseConnector):
             for item in listed
         ]
 
+    def _discover_endpoint(self, base_url: str, record_type: str, ticket: str, fecha: str | None, estado: str | None) -> list[RawRecordInput]:
+        params = {"ticket": ticket}
+        if fecha:
+            params["fecha"] = fecha
+        if estado:
+            params["estado"] = estado
+        url = f"{base_url}?{urlencode(params)}"
+        safe_params = {**params, "ticket": "***"}
+        safe_url = f"{base_url}?{urlencode(safe_params)}"
+        response_payload = self._get_json(url, safe_url)
+        listed = _as_list(response_payload.get("Listado") or response_payload.get("listado"))
+        return [
+            RawRecordInput(
+                _external_id_for(item, record_type),
+                safe_url,
+                {"_record_type": record_type, "_discovery": True, "api_response": response_payload, "record": item},
+            )
+            for item in listed
+            if _external_id_for(item, record_type)
+        ]
+
     def _fixture_records(self, kind: str) -> list[RawRecordInput]:
         records = []
         if kind in ("licitaciones", "all"):
@@ -150,6 +226,46 @@ class ChileCompraConnector(BaseConnector):
         if kind in ("ordenes_compra", "oc", "all"):
             records.append(RawRecordInput(FIXTURE_PURCHASE_ORDER["Codigo"], None, {"_record_type": "purchase_order", "record": FIXTURE_PURCHASE_ORDER}))
         return records
+
+    def _get_json(self, url: str, safe_url: str) -> dict:
+        request = Request(url, headers={"User-Agent": "mapapoderlatam-chilecompra/1.0"})
+        last_error: BaseException | None = None
+        for attempt in range(self.retries + 1):
+            _notify_request(safe_url)
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    raw = response.read().decode("utf-8-sig")
+                return json.loads(raw)
+            except HTTPError as exc:
+                body = ""
+                try:
+                    body = exc.read(300).decode("utf-8", errors="replace").strip()
+                except Exception:
+                    body = ""
+                if exc.code in {408, 429, 500, 502, 503, 504}:
+                    last_error = exc
+                    if attempt < self.retries:
+                        self._sleep_before_retry(attempt)
+                        continue
+                    detail = f" HTTP {exc.code}" + (f": {body}" if body else "")
+                    raise ChileCompraTransientError(f"{safe_url}{detail}", quota_counted=True) from exc
+                detail = f" HTTP {exc.code}" + (f": {body}" if body else "")
+                raise ChileCompraPermanentError(f"{safe_url}{detail}") from exc
+            except json.JSONDecodeError as exc:
+                raise ChileCompraTransientError(f"{safe_url} returned invalid JSON: {exc}", quota_counted=True) from exc
+            except (ConnectionResetError, TimeoutError, socket.timeout, URLError, OSError) as exc:
+                last_error = exc
+                if attempt < self.retries:
+                    self._sleep_before_retry(attempt)
+                    continue
+                reason = getattr(exc, "reason", exc)
+                raise ChileCompraTransientError(f"{safe_url}: {reason}", quota_counted=False) from exc
+        raise ChileCompraTransientError(f"{safe_url}: {last_error}", quota_counted=False)
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        if self.backoff_seconds <= 0:
+            return
+        time.sleep(self.backoff_seconds * (2**attempt))
 
     def _normalize_tender(self, payload: dict, raw_record: RawRecordInput) -> NormalizedGraph:
         source_mode = "real_api" if raw_record.source_url else "fixture"

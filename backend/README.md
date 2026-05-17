@@ -50,7 +50,51 @@ python -m scripts.ingest chilecompra --kind licitaciones --codigo 2424-12-LP24
 python -m scripts.ingest chilecompra --kind ordenes_compra --codigo 2424-77-SE24
 ```
 
-Los conectores de InfoLobby, InfoProbidad, Registro de Colaboradores y SERVEL quedan preparados con errores explícitos hasta definir endpoints/datasets oficiales.
+Discovery por fecha y hydration desde cola:
+
+```bash
+python -m scripts.discover_chilecompra --date 2026-05-17 --kind all
+python -m scripts.hydrate_chilecompra --budget 500
+```
+
+Worker 24/7:
+
+```bash
+python -m scripts.chilecompra_worker --daily-budget 9000 --hydration-budget 500
+```
+
+El worker duerme fuera de la ventana nocturna `22:00-07:00`, cuenta requests por día/ticket y corta antes del límite oficial si llega al presupuesto configurado.
+
+## Ingesta InfoLobby
+
+InfoLobby se carga desde CSV locales en `backend/data/infolobby`. Los archivos oficiales exportados están codificados como UTF-16 y se procesan en streaming para evitar cargar millones de filas en memoria.
+
+TUI general de seedeo:
+
+```bash
+python -m scripts.seed_data_tui
+```
+
+Atajos principales:
+
+- `c`: activa el worker de ChileCompra en segundo plano.
+- `i`: carga InfoLobby desde CSV locales.
+- `r`: refresca contadores.
+- `q`: sale.
+
+Prueba acotada:
+
+```bash
+python -m scripts.ingest infolobby --file audiencias --limit 100 --batch-size 50
+```
+
+Carga completa:
+
+```bash
+python -m scripts.ingest infolobby --data-dir data/infolobby --batch-size 1000
+```
+
+Los conectores de InfoProbidad, Registro de Colaboradores y SERVEL quedan preparados con errores explícitos hasta definir endpoints/datasets oficiales.
 
 ## IA
 

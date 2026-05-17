@@ -1,4 +1,11 @@
-from ingestion.sources.chilecompra import ChileCompraConnector, FIXTURE_PURCHASE_ORDER, FIXTURE_TENDER
+from ingestion.sources.chilecompra import (
+    ChileCompraConnector,
+    FIXTURE_PURCHASE_ORDER,
+    FIXTURE_TENDER,
+    LICITACIONES_URL,
+    ORDENES_COMPRA_URL,
+    ORDEN_COMPRA_URL,
+)
 from ingestion.base import RawRecordInput
 
 
@@ -24,3 +31,9 @@ def test_chilecompra_fetch_fixture_all():
     records = ChileCompraConnector().fetch(fixture=True, kind="all")
 
     assert [record.payload["_record_type"] for record in records] == ["tender", "purchase_order"]
+
+
+def test_chilecompra_api_endpoints_use_https():
+    assert LICITACIONES_URL.startswith("https://")
+    assert ORDEN_COMPRA_URL.startswith("https://")
+    assert ORDENES_COMPRA_URL.startswith("https://")

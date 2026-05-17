@@ -77,6 +77,19 @@ python -m scripts.ingest chilecompra --kind licitaciones --codigo 2424-12-LP24
 python -m scripts.ingest chilecompra --kind ordenes_compra --codigo 2424-77-SE24
 ```
 
+Para operación continua, usa el worker. Corre 24/7, pero solo hace discovery/hydration masiva durante la ventana nocturna configurada:
+
+```bash
+python -m scripts.chilecompra_worker --daily-budget 9000 --hydration-budget 500
+```
+
+Scripts manuales con guardrail horario:
+
+```bash
+python -m scripts.discover_chilecompra --date 2026-05-17 --kind all
+python -m scripts.hydrate_chilecompra --budget 500
+```
+
 Sin ticket, el conector falla con un mensaje explícito. Los fixtures se usan solo con `--fixture` para desarrollo local.
 
 InfoLobby, InfoProbidad, Registro de Colaboradores y SERVEL están preparados como conectores con pendientes concretos de endpoint/dataset oficial.

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from itertools import islice
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -130,13 +131,19 @@ def persist_graph(db: Session, graph: NormalizedGraph) -> int:
 
 
 def run_connector(db: Session, connector: BaseConnector, **kwargs) -> IngestionRun:
-    run = IngestionRun(source_name=connector.source_name, status="running", run_metadata={"kwargs": kwargs})
+    limit = kwargs.pop("limit", None)
+    batch_size = int(kwargs.pop("batch_size", 1000) or 1000)
+    if batch_size < 1:
+        batch_size = 1000
+    run = IngestionRun(source_name=connector.source_name, status="running", run_metadata={"kwargs": {**kwargs, "limit": limit, "batch_size": batch_size}})
     db.add(run)
     db.commit()
     try:
-        raw_records = connector.fetch(**kwargs)
-        run.records_fetched = len(raw_records)
+        raw_records = connector.iter_fetch(**kwargs)
+        if limit is not None:
+            raw_records = islice(raw_records, int(limit))
         for raw in raw_records:
+            run.records_fetched += 1
             raw_record = RawRecord(
                 source_name=connector.source_name,
                 external_id=raw.external_id,
@@ -163,6 +170,11 @@ def run_connector(db: Session, connector: BaseConnector, **kwargs) -> IngestionR
                 raw_record.error_message = str(exc)
                 run.records_failed += 1
                 logger.exception("Failed to process %s record %s", connector.source_name, raw.external_id)
+            if run.records_fetched % batch_size == 0:
+                run_id = run.id
+                db.commit()
+                db.expunge_all()
+                run = db.get(IngestionRun, run_id)
         run.status = "completed" if run.records_failed == 0 else "completed_with_errors"
     except Exception as exc:
         run.status = "failed"

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -47,6 +48,9 @@ class BaseConnector:
 
     def fetch(self, **kwargs) -> list[RawRecordInput]:
         raise NotImplementedError
+
+    def iter_fetch(self, **kwargs) -> Iterable[RawRecordInput]:
+        return iter(self.fetch(**kwargs))
 
     def normalize(self, raw_record: RawRecordInput) -> NormalizedGraph:
         raise NotImplementedError
