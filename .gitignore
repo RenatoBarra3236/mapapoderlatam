@@ -12,3 +12,8 @@ backend/tui-rs/target/
 __pycache__/
 *.pyc
 .pytest_cache/
+offshore/
+infolobby/
+
+# Large backend source datasets
+/backend/data/
