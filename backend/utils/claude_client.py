@@ -1,26 +1,45 @@
-import os
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from config.settings import get_settings
 
 settings = get_settings()
 
-client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-async def ask_claude(prompt: str, model: str = "claude-3-5-sonnet-20241022") -> str:
+DEFAULT_MODEL = "claude-sonnet-4-6"
+
+
+async def ask_claude(
+    prompt: str,
+    system: str | list[dict] | None = None,
+    model: str = DEFAULT_MODEL,
+    max_tokens: int = 1024,
+) -> str:
     """
-    Hace una pregunta a Claude y retorna la respuesta.
+    Llama a Claude y retorna la respuesta de texto.
+
+    Si `system` es un string, se envuelve como bloque de texto con cache_control
+    ephemeral para que el contexto del subgrafo se cachee entre llamadas al mismo
+    nodo (ahorro ~90% en tokens repetidos). El prefijo debe ser >=1024 tokens
+    para que el cache se active.
     """
-    try:
-        message = client.messages.create(
-            model=model,
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        )
-        return message.content[0].text
-    except Exception as e:
-        raise Exception(f"Error calling Claude API: {str(e)}")
+    if isinstance(system, str):
+        system_param = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    else:
+        system_param = system
+
+    kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system_param is not None:
+        kwargs["system"] = system_param
+
+    message = await client.messages.create(**kwargs)
+    return message.content[0].text
