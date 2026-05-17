@@ -45,12 +45,12 @@ async function request(path, config = {}) {
   }
 }
 
-async function requestPost(path, payload = {}) {
+async function requestPost(path, payload = {}, config = {}) {
   if (!USE_BACKEND) {
     throw new ApiError('Backend desactivado por VITE_USE_BACKEND=false.');
   }
   try {
-    const { data } = await client.post(path, payload);
+    const { data } = await client.post(path, payload, config);
     return data;
   } catch (error) {
     throw new ApiError(readableError(error), error);
@@ -203,10 +203,15 @@ function buildChatContext(caseData, lang) {
 }
 
 export async function getAISummary(entityId, lang = 'es') {
-  return request(`/summary/${entityId}`, { params: { lang } });
+  return request(`/summary/${entityId}`, { 
+    params: { lang },
+    timeout: 45000 
+  });
 }
 
 export async function chatWithProfile(message, caseData, lang, history = []) {
   const context = buildChatContext(caseData, lang);
-  return requestPost('/chat', { message, context, lang, history });
+  return requestPost('/chat', { message, context, lang, history }, {
+    timeout: 45000
+  });
 }

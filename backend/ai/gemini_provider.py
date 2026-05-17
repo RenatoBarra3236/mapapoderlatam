@@ -7,7 +7,11 @@ _MODEL = "gemini-3.1-flash-lite-preview"
 
 class GeminiProvider(AIProvider):
     def __init__(self, api_key: str):
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options={'timeout': 45.0}
+        )
+
 
     @property
     def name(self) -> str:

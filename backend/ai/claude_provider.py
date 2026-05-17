@@ -6,7 +6,7 @@ _MODEL = "claude-sonnet-4-6"
 
 class ClaudeProvider(AIProvider):
     def __init__(self, api_key: str):
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._client = anthropic.AsyncAnthropic(api_key=api_key, timeout=45.0)
 
     @property
     def name(self) -> str:
