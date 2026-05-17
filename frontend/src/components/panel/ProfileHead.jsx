@@ -1,0 +1,48 @@
+import React from 'react';
+
+function RiskBadge({ value, t }) {
+  const sev = value >= 65 ? 'high' : value >= 40 ? 'med' : 'low';
+  const label = value >= 65 ? t.severityHigh : value >= 40 ? t.severityMedium : t.severityLow;
+  return (
+    <span className={`risk-tag ${sev === 'med' ? 'med' : sev === 'low' ? 'low' : ''}`}>
+      {label}
+    </span>
+  );
+}
+
+export default function ProfileHead({ caseData, lang, t }) {
+  const root = caseData.nodes.find(n => n.id === caseData.rootId);
+  const connections = caseData.edges.filter(e => e.s === caseData.rootId || e.t === caseData.rootId).length;
+  const flaggedRel = caseData.edges.filter(e => e.flag).length;
+
+  return (
+    <div className="profile-head">
+      <div className="profile-eyebrow">
+        <span className={`type-dot ${root.type}`} />
+        {t.nodeTypes[root.type]} · {root.country}
+      </div>
+      <h2 className="profile-name">{root.name}</h2>
+      {root.subtitle && <div className="profile-sub">{root.subtitle}</div>}
+
+      <div className="profile-stats">
+        <div className="stat-card risk">
+          <div className="label">{t.riskScore}</div>
+          <div className="value">{root.risk}<RiskBadge value={root.risk} t={t} /></div>
+        </div>
+        <div className="stat-card">
+          <div className="label">{lang === 'es' ? 'Conexiones' : 'Connections'}</div>
+          <div className="value">{connections}</div>
+        </div>
+        <div className="stat-card full">
+          <div className="label">{lang === 'es' ? 'Relaciones marcadas' : 'Flagged relations'}</div>
+          <div className="value" style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            {flaggedRel}
+            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
+              / {caseData.edges.length} {lang === 'es' ? 'totales' : 'total'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
