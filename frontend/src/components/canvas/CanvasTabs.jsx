@@ -16,10 +16,17 @@ export default function CanvasTabs({ view, setView, lang, caseData }) {
 
   return (
     <div className="canvas-tabs">
-      <div className="tabs-group">
+      <div
+        className="tabs-group"
+        role="tablist"
+        aria-label={lang === 'es' ? 'Vistas del grafo' : 'Graph views'}
+      >
         {TAB_KEYS.map(k => (
           <button
             key={k}
+            type="button"
+            role="tab"
+            aria-selected={view === k}
             className={`tab-btn ${view === k ? 'active' : ''}`}
             onClick={() => setView(k)}
           >

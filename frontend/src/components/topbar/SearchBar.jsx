@@ -74,18 +74,34 @@ export default function SearchBar({ t, lang, onPick }) {
   return (
     <div className="search-wrap" ref={wrapRef}>
       <div className="search-input-row">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="m20 20-3.5-3.5" />
         </svg>
         <input
           type="text"
+          role="combobox"
+          aria-label={t.searchPlaceholder}
+          aria-expanded={showDropdown}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-controls="search-results"
           placeholder={t.searchPlaceholder}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
+          onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); e.currentTarget.blur(); } }}
         />
-        <span className="search-kbd">⌘K</span>
+        {query ? (
+          <button
+            type="button"
+            className="search-clear"
+            aria-label={lang === 'es' ? 'Limpiar búsqueda' : 'Clear search'}
+            onClick={() => { setQuery(''); setOpen(false); }}
+          >✕</button>
+        ) : (
+          <span className="search-kbd" aria-hidden="true">⌘K</span>
+        )}
       </div>
 
       {showDropdown && (

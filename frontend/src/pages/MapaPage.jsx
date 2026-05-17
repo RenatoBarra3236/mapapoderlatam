@@ -67,7 +67,7 @@ export default function MapaPage() {
     }
     checkBackend();
     return () => { cancelled = true; };
-  }, []);
+  }, [lang]);
 
   const t = I18N[lang];
   const caseData = activeCase;

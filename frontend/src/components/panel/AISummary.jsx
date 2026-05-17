@@ -11,7 +11,9 @@ export default function AISummary({ caseData, lang, t }) {
       <div className="ai-summary-card">
         <div className="ai-eyebrow">
           <span className="pulse-dot" />
-          {lang === 'es' ? 'Análisis generado' : 'Generated analysis'}
+          {caseData.fromApi
+            ? (lang === 'es' ? 'Resumen estructurado' : 'Structured summary')
+            : (lang === 'es' ? 'Análisis generado' : 'Generated analysis')}
         </div>
         <div className="ai-summary-body">{summary}</div>
       </div>

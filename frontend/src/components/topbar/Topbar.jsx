@@ -14,23 +14,39 @@ export default function Topbar({ lang, setLang, theme, setTheme, t, onPickCase, 
       <SearchBar t={t} lang={lang} onPick={onPickCase} />
 
       <div className="topbar-tools">
-        <div className="lang-toggle">
-          <button className={lang === 'es' ? 'active' : ''} onClick={() => setLang('es')}>ES</button>
-          <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>EN</button>
+        <div className="lang-toggle" role="group" aria-label={lang === 'es' ? 'Idioma' : 'Language'}>
+          <button
+            type="button"
+            className={lang === 'es' ? 'active' : ''}
+            aria-pressed={lang === 'es'}
+            aria-label={lang === 'es' ? 'Español (activo)' : 'Cambiar a Español'}
+            onClick={() => setLang('es')}
+          >ES</button>
+          <button
+            type="button"
+            className={lang === 'en' ? 'active' : ''}
+            aria-pressed={lang === 'en'}
+            aria-label={lang === 'en' ? 'English (active)' : 'Switch to English'}
+            onClick={() => setLang('en')}
+          >EN</button>
         </div>
         <button
+          type="button"
           className="tool-btn"
           onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-          aria-label="toggle theme"
+          aria-label={lang === 'es'
+            ? (theme === 'light' ? 'Cambiar a tema oscuro' : 'Cambiar a tema claro')
+            : (theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme')}
         >
           {theme === 'light' ? '☾' : '☀'}
         </button>
         <button
+          type="button"
           className="tool-btn"
           onClick={onOpenTweaks}
-          aria-label="Open tweaks"
+          aria-label={lang === 'es' ? 'Abrir ajustes de visualización' : 'Open display settings'}
         >
-          {lang === 'es' ? 'Tweaks' : 'Tweaks'}
+          {lang === 'es' ? 'Ajustes' : 'Settings'}
         </button>
       </div>
     </header>

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode},
@@ -10,7 +10,7 @@ use crossterm::{
 use postgres::{Client, NoTls};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     fs::{File, OpenOptions},
     io::{self, BufWriter, Read, Write},
@@ -33,6 +33,8 @@ const LATAM_ISO3: &[&str] = &[
 #[derive(Parser, Debug)]
 #[command(name = "seed-tui-rs", about = "TUI Rust para carga de datos")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
     #[arg(long)]
     once: bool,
     #[arg(long)]
@@ -83,10 +85,61 @@ struct Args {
     backfill_from: Option<String>,
     #[arg(long, help = "Backfill hasta YYYY-MM-DD (por defecto hoy)")]
     backfill_to: Option<String>,
-    #[arg(long, default_value_t = 0.1, help = "Segundos entre fechas durante backfill")]
+    #[arg(
+        long,
+        default_value_t = 0.1,
+        help = "Segundos entre fechas durante backfill"
+    )]
     sleep_between: f64,
-    #[arg(long, default_value_t = 5, help = "Pausar backfill tras N errores consecutivos")]
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Pausar backfill tras N errores consecutivos"
+    )]
     max_consecutive_errors: u32,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    FastDemo(FastDemoArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+struct FastDemoArgs {
+    #[arg(long, default_value = "infolobby,offshore")]
+    sources: String,
+    #[arg(long)]
+    infolobby_dir: Option<String>,
+    #[arg(long)]
+    offshore_dir: Option<String>,
+    #[arg(long, default_value_t = 100)]
+    limit_audiences: u64,
+    #[arg(long)]
+    focus: Option<String>,
+    #[arg(long)]
+    audience_ids: Option<String>,
+    #[arg(long, default_value_t = 1000)]
+    offshore_limit: u64,
+    #[arg(long)]
+    offshore_country_code: Vec<String>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    skip_raw: bool,
+    #[arg(long, value_enum, default_value_t = RawMode::Minimal)]
+    raw_mode: RawMode,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum RawMode {
+    Minimal,
+    Full,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum FastSource {
+    Infolobby,
+    Offshore,
 }
 
 #[derive(Clone, Default)]
@@ -186,6 +239,11 @@ fn main() -> Result<()> {
             }),
     );
 
+    if let Some(Command::FastDemo(fast_args)) = args.command.as_ref() {
+        run_fast_demo(db_url.clone(), &backend_dir, fast_args)?;
+        return Ok(());
+    }
+
     if args.once {
         let stats = collect_stats(&db_url).unwrap_or_default();
         print_stats(&stats);
@@ -195,7 +253,7 @@ fn main() -> Result<()> {
         let (tx, _rx) = mpsc::channel();
         run_infolobby_rust(
             InfolobbyOptions {
-                db_url,
+                db_url: db_url.clone(),
                 data_dir: args
                     .infolobby_data_dir
                     .clone()
@@ -206,6 +264,9 @@ fn main() -> Result<()> {
                 chunk_bytes: args.infolobby_copy_chunk_mb.max(1) as usize * 1024 * 1024,
                 skip_raw_records: args.infolobby_skip_raw_records,
                 skip_count: args.infolobby_skip_count,
+                cleanup: true,
+                idempotent_sources: false,
+                fast_demo_relationships: false,
             },
             tx,
         )?;
@@ -216,7 +277,7 @@ fn main() -> Result<()> {
         let (tx, _rx) = mpsc::channel();
         run_offshore_rust(
             OffshoreOptions {
-                db_url,
+                db_url: db_url.clone(),
                 data_dir: args
                     .offshore_data_dir
                     .clone()
@@ -224,6 +285,9 @@ fn main() -> Result<()> {
                     .unwrap_or_else(|| backend_dir.join("data/offshore")),
                 limit: args.offshore_limit,
                 country_codes: normalize_offshore_country_codes(&args.offshore_country_code),
+                cleanup: true,
+                idempotent_sources: false,
+                mode: "rust_tui_rebuild".to_string(),
             },
             tx,
         )?;
@@ -321,6 +385,9 @@ fn start_infolobby(app: &mut App, args: &Args, tx: Sender<Msg>) {
         chunk_bytes: args.infolobby_copy_chunk_mb.max(1) as usize * 1024 * 1024,
         skip_raw_records: args.infolobby_skip_raw_records,
         skip_count: args.infolobby_skip_count,
+        cleanup: true,
+        idempotent_sources: false,
+        fast_demo_relationships: false,
     };
     thread::spawn(move || {
         if let Err(err) = run_infolobby_rust(opts, tx.clone()) {
@@ -356,6 +423,9 @@ fn start_offshore(app: &mut App, args: &Args, tx: Sender<Msg>) {
             .unwrap_or_else(|| app.backend_dir.join("data/offshore")),
         limit: args.offshore_limit,
         country_codes: normalize_offshore_country_codes(&args.offshore_country_code),
+        cleanup: true,
+        idempotent_sources: false,
+        mode: "rust_tui_rebuild".to_string(),
     };
     thread::spawn(move || {
         if let Err(err) = run_offshore_rust(opts, tx.clone()) {
@@ -381,7 +451,8 @@ fn start_chile(app: &mut App, args: &Args, tx: Sender<Msg>) {
         Ok(t) if !t.trim().is_empty() => t,
         _ => {
             app.chile.status = "error".to_string();
-            app.chile.message = "CHILECOMPRA_TICKET no configurado — define la variable de entorno".to_string();
+            app.chile.message =
+                "CHILECOMPRA_TICKET no configurado — define la variable de entorno".to_string();
             app.message = "ChileCompra: CHILECOMPRA_TICKET falta".to_string();
             return;
         }
@@ -409,19 +480,17 @@ fn start_chile(app: &mut App, args: &Args, tx: Sender<Msg>) {
         sleep_between: args.sleep_between,
         max_consecutive_errors: args.max_consecutive_errors,
     };
-    thread::spawn(move || {
-        match run_chilecompra_worker(opts, tx.clone()) {
-            Ok(()) => {}
-            Err(err) => {
-                let _ = tx.send(Msg::Progress {
-                    task: TaskKind::Chile,
-                    payload: serde_json::json!({
-                        "phase": "done",
-                        "status": "error",
-                        "message": err.to_string(),
-                    }),
-                });
-            }
+    thread::spawn(move || match run_chilecompra_worker(opts, tx.clone()) {
+        Ok(()) => {}
+        Err(err) => {
+            let _ = tx.send(Msg::Progress {
+                task: TaskKind::Chile,
+                payload: serde_json::json!({
+                    "phase": "done",
+                    "status": "error",
+                    "message": err.to_string(),
+                }),
+            });
         }
     });
 }
@@ -497,7 +566,10 @@ fn poll_finished(app: &mut App, task: TaskKind) {
             }
         }
         TaskKind::Chile => {
-            if app.chile.status == "completed" || app.chile.status == "error" || app.chile.status == "done" {
+            if app.chile.status == "completed"
+                || app.chile.status == "error"
+                || app.chile.status == "done"
+            {
                 app.chilecompra_active = false;
             }
         }
@@ -949,6 +1021,51 @@ struct OffshoreOptions {
     data_dir: PathBuf,
     limit: Option<u64>,
     country_codes: Vec<String>,
+    cleanup: bool,
+    idempotent_sources: bool,
+    mode: String,
+}
+
+#[derive(Default, Clone)]
+struct OffshoreRunSummary {
+    nodes_selected: u64,
+    relationships_selected: u64,
+    entities_upserted: u64,
+    relationships_upserted: u64,
+}
+
+#[derive(Default, Clone)]
+struct InfolobbyRunSummary {
+    audiences_selected: u64,
+    rows_copied: u64,
+    entities_upserted: u64,
+    relationships_upserted: u64,
+}
+
+#[derive(Default)]
+struct FastDemoSummary {
+    infolobby: Option<InfolobbyRunSummary>,
+    offshore: Option<OffshoreRunSummary>,
+    recommendations: Vec<DemoRecommendation>,
+}
+
+struct DemoRecommendation {
+    id: i32,
+    display_name: String,
+    entity_type: String,
+    degree: i64,
+}
+
+#[derive(Default)]
+struct NormalizeStats {
+    entities_upserted: u64,
+    relationships_upserted: u64,
+}
+
+#[derive(Default)]
+struct InfolobbyFastSelection {
+    audience_ids: HashSet<String>,
+    passive_codes: HashSet<String>,
 }
 
 fn normalize_offshore_country_codes(values: &[String]) -> Vec<String> {
@@ -971,13 +1088,647 @@ fn normalize_offshore_country_codes(values: &[String]) -> Vec<String> {
     }
 }
 
+fn parse_fast_sources(value: &str) -> Result<Vec<FastSource>> {
+    let mut out = Vec::new();
+    for raw in value.split(',') {
+        let source = match raw.trim().to_ascii_lowercase().as_str() {
+            "infolobby" => FastSource::Infolobby,
+            "offshore" => FastSource::Offshore,
+            "" => continue,
+            other => anyhow::bail!("Fuente fast-demo desconocida: {other}"),
+        };
+        if !out.contains(&source) {
+            out.push(source);
+        }
+    }
+    if out.is_empty() {
+        anyhow::bail!("--sources debe incluir infolobby, offshore o ambos");
+    }
+    Ok(out)
+}
+
+fn run_fast_demo(db_url: String, backend_dir: &Path, args: &FastDemoArgs) -> Result<()> {
+    let sources = parse_fast_sources(&args.sources)?;
+    let mut summary = FastDemoSummary::default();
+    let mut source_errors = Vec::new();
+    let (tx, _rx) = mpsc::channel();
+
+    for source in sources {
+        match source {
+            FastSource::Infolobby => {
+                let infolobby_dir = args
+                    .infolobby_dir
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| backend_dir.join("data/infolobby"));
+                let result = run_infolobby_fast_demo(
+                    FastInfolobbyOptions {
+                        db_url: db_url.clone(),
+                        data_dir: infolobby_dir,
+                        limit_audiences: args.limit_audiences,
+                        focus: args.focus.clone(),
+                        audience_ids: args.audience_ids.clone(),
+                        skip_raw_records: args.skip_raw
+                            || matches!(args.raw_mode, RawMode::Minimal),
+                        dry_run: args.dry_run,
+                    },
+                    tx.clone(),
+                );
+                match result {
+                    Ok(infolobby) => summary.infolobby = Some(infolobby),
+                    Err(err) if is_fatal_fast_demo_error(&err) => return Err(err),
+                    Err(err) => source_errors.push(format!("InfoLobby failed: {err}")),
+                }
+            }
+            FastSource::Offshore => {
+                let offshore_dir = args
+                    .offshore_dir
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| backend_dir.join("data/offshore"));
+                if args.dry_run {
+                    summary.offshore = Some(OffshoreRunSummary {
+                        relationships_selected: args.offshore_limit,
+                        ..OffshoreRunSummary::default()
+                    });
+                    continue;
+                }
+                let result = run_offshore_rust(
+                    OffshoreOptions {
+                        db_url: db_url.clone(),
+                        data_dir: offshore_dir,
+                        limit: Some(args.offshore_limit),
+                        country_codes: normalize_offshore_country_codes(
+                            &args.offshore_country_code,
+                        ),
+                        cleanup: false,
+                        idempotent_sources: true,
+                        mode: "fast_demo".to_string(),
+                    },
+                    tx.clone(),
+                );
+                match result {
+                    Ok(offshore) => summary.offshore = Some(offshore),
+                    Err(err) if is_fatal_fast_demo_error(&err) => return Err(err),
+                    Err(err) => {
+                        source_errors.push(format!("Offshore failed: {}", pg_error_detail(&err)))
+                    }
+                }
+            }
+        }
+    }
+
+    if summary.infolobby.is_none() && summary.offshore.is_none() && !source_errors.is_empty() {
+        anyhow::bail!("{}", source_errors.join("; "));
+    }
+
+    if !args.dry_run {
+        summary.recommendations = collect_demo_recommendations(&db_url)?;
+    }
+    print_fast_demo_summary(&summary);
+    for error in source_errors {
+        eprintln!("{error}");
+    }
+    Ok(())
+}
+
+fn is_fatal_fast_demo_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.downcast_ref::<postgres::Error>().is_some())
+}
+
+struct FastInfolobbyOptions {
+    db_url: String,
+    data_dir: PathBuf,
+    limit_audiences: u64,
+    focus: Option<String>,
+    audience_ids: Option<String>,
+    skip_raw_records: bool,
+    dry_run: bool,
+}
+
+const FAST_INFOLOBBY_FILES: &[&str] = &[
+    "audiencias.csv",
+    "activos.csv",
+    "pasivos.csv",
+    "asistenciasActivos.csv",
+    "asistenciasPasivos.csv",
+    "datosAudiencia.csv",
+    "representaciones.csv",
+    "trabajaPara.csv",
+];
+
+fn run_infolobby_fast_demo(
+    opts: FastInfolobbyOptions,
+    tx: Sender<Msg>,
+) -> Result<InfolobbyRunSummary> {
+    let mut selection = select_fast_infolobby_audiences(&opts)?;
+    gather_fast_infolobby_linked_codes(&opts.data_dir, &mut selection)?;
+    let audience_count = selection.audience_ids.len() as u64;
+    if audience_count == 0 {
+        anyhow::bail!("No se encontraron audiencias InfoLobby para fast-demo");
+    }
+    if opts.dry_run {
+        println!(
+            "InfoLobby dry-run: {} audiencias seleccionadas, {} codigos pasivos vinculados",
+            audience_count,
+            selection.passive_codes.len()
+        );
+        return Ok(InfolobbyRunSummary {
+            audiences_selected: audience_count,
+            ..InfolobbyRunSummary::default()
+        });
+    }
+
+    let mut client = Client::connect(&opts.db_url, NoTls)?;
+    client.batch_execute(
+        "SET statement_timeout = 0; SET work_mem = '512MB'; SET search_path = pg_temp, public",
+    )?;
+    let run_token = format!(
+        "fast_{}",
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    );
+    let selected = FAST_INFOLOBBY_FILES.to_vec();
+    let tables: HashMap<String, String> = selected
+        .iter()
+        .map(|file| {
+            (
+                file.to_string(),
+                format!(
+                    "tmp_infolobby_fast_{}_{}",
+                    file.trim_end_matches(".csv").to_lowercase(),
+                    run_token
+                ),
+            )
+        })
+        .collect();
+    let run_id: i32 = client
+        .query_one(
+            "INSERT INTO ingestion_runs (source_name, status, metadata) VALUES ('infolobby', 'running', $1::text::jsonb) RETURNING id",
+            &[&serde_json::json!({"mode":"fast_demo","audiences_selected":audience_count,"focus":opts.focus,"run_token":run_token}).to_string()],
+        )?
+        .get(0);
+
+    let result = (|| -> Result<(InfolobbyCopyTotals, NormalizeStats)> {
+        client.batch_execute("BEGIN")?;
+        let totals =
+            copy_fast_infolobby_files(&mut client, &opts, &selection, &selected, &tables, &tx)?;
+        let stats = normalize_infolobby(
+            &mut client,
+            &tables,
+            &run_token,
+            opts.skip_raw_records,
+            true,
+            true,
+            &tx,
+        )?;
+        client.batch_execute("COMMIT")?;
+        Ok((totals, stats))
+    })();
+
+    match result {
+        Ok((totals, stats)) => {
+            finish_infolobby_run(&mut client, run_id, "completed", &totals, None)?;
+            Ok(InfolobbyRunSummary {
+                audiences_selected: audience_count,
+                rows_copied: totals.copied,
+                entities_upserted: stats.entities_upserted,
+                relationships_upserted: stats.relationships_upserted,
+            })
+        }
+        Err(err) => {
+            let _ = client.batch_execute("ROLLBACK");
+            let empty = InfolobbyCopyTotals {
+                copied: 0,
+                skipped: 0,
+                extra_columns: 0,
+            };
+            let _ = finish_infolobby_run(
+                &mut client,
+                run_id,
+                "failed",
+                &empty,
+                Some(&err.to_string()),
+            );
+            Err(err)
+        }
+    }
+}
+
+fn select_fast_infolobby_audiences(opts: &FastInfolobbyOptions) -> Result<InfolobbyFastSelection> {
+    let mut selection = InfolobbyFastSelection::default();
+    let limit = opts.limit_audiences.max(1) as usize;
+    if let Some(ids) = &opts.audience_ids {
+        for id in ids.split([',', ';', ' ', '\n', '\t']) {
+            let clean = clean_code_rs(id);
+            if !clean.is_empty() {
+                selection.audience_ids.insert(clean);
+            }
+            if selection.audience_ids.len() >= limit {
+                break;
+            }
+        }
+        return Ok(selection);
+    }
+    if let Some(focus) = &opts.focus {
+        let needle = focus.trim().to_ascii_lowercase();
+        if !needle.is_empty() {
+            for file_name in FAST_INFOLOBBY_FILES {
+                if selection.audience_ids.len() >= limit {
+                    break;
+                }
+                scan_infolobby_for_focus(
+                    &opts.data_dir.join(file_name),
+                    file_name,
+                    &needle,
+                    limit,
+                    &mut selection.audience_ids,
+                )?;
+            }
+            if !selection.audience_ids.is_empty() {
+                return Ok(selection);
+            }
+        }
+    }
+    select_connected_infolobby_sample(&opts.data_dir, limit, &mut selection.audience_ids)?;
+    Ok(selection)
+}
+
+fn scan_infolobby_for_focus(
+    path: &Path,
+    file_name: &str,
+    needle: &str,
+    limit: usize,
+    audience_ids: &mut HashSet<String>,
+) -> Result<()> {
+    let headers = headers_for(file_name);
+    let mut rdr = utf16_csv_reader(path)?;
+    validate_infolobby_headers(&mut rdr, path, &headers)?;
+    for row in rdr.records() {
+        let row = row?;
+        if row
+            .iter()
+            .any(|cell| cell.to_ascii_lowercase().contains(needle))
+        {
+            if let Some(code) = audience_code_from_row(file_name, &headers, &row) {
+                audience_ids.insert(code);
+            }
+        }
+        if audience_ids.len() >= limit {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn select_connected_infolobby_sample(
+    data_dir: &Path,
+    limit: usize,
+    audience_ids: &mut HashSet<String>,
+) -> Result<()> {
+    let mut active_audiences = HashSet::new();
+    scan_audience_codes(
+        &data_dir.join("asistenciasActivos.csv"),
+        "asistenciasActivos.csv",
+        limit.saturating_mul(200).max(1_000),
+        &mut active_audiences,
+    )?;
+    let headers = headers_for("asistenciasPasivos.csv");
+    let path = data_dir.join("asistenciasPasivos.csv");
+    let mut rdr = utf16_csv_reader(&path)?;
+    validate_infolobby_headers(&mut rdr, &path, &headers)?;
+    for row in rdr.records() {
+        let row = row?;
+        if let Some(code) = audience_code_from_row("asistenciasPasivos.csv", &headers, &row) {
+            if active_audiences.contains(&code) {
+                audience_ids.insert(code);
+            }
+        }
+        if audience_ids.len() >= limit {
+            return Ok(());
+        }
+    }
+    for code in active_audiences {
+        audience_ids.insert(code);
+        if audience_ids.len() >= limit {
+            return Ok(());
+        }
+    }
+    scan_audience_codes(
+        &data_dir.join("audiencias.csv"),
+        "audiencias.csv",
+        limit,
+        audience_ids,
+    )?;
+    Ok(())
+}
+
+fn scan_audience_codes(
+    path: &Path,
+    file_name: &str,
+    limit: usize,
+    out: &mut HashSet<String>,
+) -> Result<()> {
+    let headers = headers_for(file_name);
+    let mut rdr = utf16_csv_reader(path)?;
+    validate_infolobby_headers(&mut rdr, path, &headers)?;
+    for row in rdr.records() {
+        let row = row?;
+        if let Some(code) = audience_code_from_row(file_name, &headers, &row) {
+            out.insert(code);
+        }
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn gather_fast_infolobby_linked_codes(
+    data_dir: &Path,
+    selection: &mut InfolobbyFastSelection,
+) -> Result<()> {
+    let headers = headers_for("asistenciasPasivos.csv");
+    let path = data_dir.join("asistenciasPasivos.csv");
+    let mut rdr = utf16_csv_reader(&path)?;
+    validate_infolobby_headers(&mut rdr, &path, &headers)?;
+    for row in rdr.records() {
+        let row = row?;
+        let Some(audience) = audience_code_from_row("asistenciasPasivos.csv", &headers, &row)
+        else {
+            continue;
+        };
+        if selection.audience_ids.contains(&audience) {
+            for name in ["codigoPasivo", "pasivo"] {
+                let value = clean_code_rs(csv_value(&headers, &row, name));
+                if !value.is_empty() {
+                    selection.passive_codes.insert(value);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_fast_infolobby_files(
+    client: &mut Client,
+    opts: &FastInfolobbyOptions,
+    selection: &InfolobbyFastSelection,
+    selected: &[&str],
+    tables: &HashMap<String, String>,
+    tx: &Sender<Msg>,
+) -> Result<InfolobbyCopyTotals> {
+    let mut totals = InfolobbyCopyTotals {
+        copied: 0,
+        skipped: 0,
+        extra_columns: 0,
+    };
+    for file_name in selected {
+        let headers = headers_for(file_name);
+        let table = tables.get(*file_name).unwrap();
+        let cols = headers
+            .iter()
+            .map(|h| format!("\"{}\" text", h.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        client.batch_execute(&format!(
+            "CREATE TEMP TABLE {table} (_seq BIGSERIAL, {cols})"
+        ))?;
+        let copied = copy_filtered_infolobby_file(
+            client,
+            &opts.data_dir.join(file_name),
+            file_name,
+            table,
+            &headers,
+            selection,
+            tx,
+        )?;
+        client.batch_execute(&format!("CREATE INDEX ON {table} ((_seq))"))?;
+        totals.copied += copied.copied;
+        totals.skipped += copied.skipped;
+        totals.extra_columns += copied.extra_columns;
+    }
+    Ok(totals)
+}
+
+fn copy_filtered_infolobby_file(
+    client: &mut Client,
+    path: &Path,
+    file_name: &str,
+    table: &str,
+    headers: &[&str],
+    selection: &InfolobbyFastSelection,
+    tx: &Sender<Msg>,
+) -> Result<InfolobbyCopyTotals> {
+    let copy_sql = format!(
+        "COPY {table} ({}) FROM STDIN WITH (FORMAT text, DELIMITER E'\\t', NULL '\\N')",
+        headers
+            .iter()
+            .map(|h| format!("\"{}\"", h.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut writer = client.copy_in(&copy_sql)?;
+    let mut rdr = utf16_csv_reader(path)?;
+    validate_infolobby_headers(&mut rdr, path, headers)?;
+    let mut totals = InfolobbyCopyTotals {
+        copied: 0,
+        skipped: 0,
+        extra_columns: 0,
+    };
+    for row in rdr.records() {
+        let row = row?;
+        if row.len() < headers.len() {
+            totals.skipped += 1;
+            continue;
+        }
+        if !fast_infolobby_row_matches(file_name, headers, &row, selection) {
+            continue;
+        }
+        if row.len() > headers.len() {
+            totals.extra_columns += 1;
+        }
+        let mut line = String::new();
+        for idx in 0..headers.len() {
+            if idx > 0 {
+                line.push('\t');
+            }
+            line.push_str(&copy_text_cell(row.get(idx).unwrap_or("")));
+        }
+        line.push('\n');
+        writer.write_all(line.as_bytes())?;
+        totals.copied += 1;
+    }
+    writer.finish()?;
+    emit(
+        tx,
+        serde_json::json!({
+            "phase":"copy fast rows","stage":"copy fast rows","file":file_name,
+            "file_rows":totals.copied,
+            "records_processed":totals.copied,
+            "records_skipped":totals.skipped,
+        }),
+    )?;
+    Ok(totals)
+}
+
+fn fast_infolobby_row_matches(
+    file_name: &str,
+    headers: &[&str],
+    row: &csv::StringRecord,
+    selection: &InfolobbyFastSelection,
+) -> bool {
+    if file_name == "pasivos.csv" {
+        return ["codigoPasivo", "codigoPersona", "nombrePasivo"]
+            .iter()
+            .map(|name| clean_code_rs(csv_value(headers, row, name)))
+            .any(|value| !value.is_empty() && selection.passive_codes.contains(&value));
+    }
+    audience_code_from_row(file_name, headers, row)
+        .map(|code| selection.audience_ids.contains(&code))
+        .unwrap_or(false)
+}
+
+fn audience_code_from_row(
+    file_name: &str,
+    headers: &[&str],
+    row: &csv::StringRecord,
+) -> Option<String> {
+    let raw = match file_name {
+        "audiencias.csv" | "datosAudiencia.csv" => {
+            let code = clean_code_rs(csv_value(headers, row, "CodigoURI"));
+            if code.is_empty() {
+                tail_rs(csv_value(headers, row, "uriAudiencia"))
+            } else {
+                code
+            }
+        }
+        "activos.csv" => tail_rs(csv_value(headers, row, "uriAudiencia")),
+        _ => clean_code_rs(csv_value(headers, row, "codigoAudiencia")),
+    };
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw)
+    }
+}
+
+fn csv_value<'a>(headers: &[&str], row: &'a csv::StringRecord, name: &str) -> &'a str {
+    headers
+        .iter()
+        .position(|header| *header == name)
+        .and_then(|idx| row.get(idx))
+        .unwrap_or("")
+}
+
+fn clean_code_rs(value: &str) -> String {
+    value.replace('\t', "").trim().to_string()
+}
+
+fn tail_rs(value: &str) -> String {
+    let clean = clean_code_rs(value);
+    clean
+        .rsplit('/')
+        .next()
+        .map(str::to_string)
+        .unwrap_or(clean)
+}
+
+fn collect_demo_recommendations(db_url: &str) -> Result<Vec<DemoRecommendation>> {
+    let mut client = Client::connect(db_url, NoTls)?;
+    let rows = client.query(
+        r#"
+        SELECT e.id, e.display_name, e.entity_type, count(r.id)::bigint AS degree
+        FROM entities e
+        LEFT JOIN relationships r ON r.source_entity_id = e.id OR r.target_entity_id = e.id
+        WHERE e.external_id LIKE 'infolobby:%'
+           OR e.external_id LIKE 'offshore:%'
+           OR e.metadata->>'source_name' IN ('infolobby', 'offshore')
+        GROUP BY e.id, e.display_name, e.entity_type, e.risk_score
+        HAVING count(r.id) > 0
+        ORDER BY degree DESC,
+                 CASE e.entity_type WHEN 'public_body' THEN 0 WHEN 'audience' THEN 1 WHEN 'company' THEN 2 WHEN 'person' THEN 3 ELSE 4 END,
+                 e.risk_score DESC,
+                 e.display_name
+        LIMIT 8
+        "#,
+        &[],
+    )?;
+    Ok(rows
+        .into_iter()
+        .map(|row| DemoRecommendation {
+            id: row.get(0),
+            display_name: row.get(1),
+            entity_type: row.get(2),
+            degree: row.get(3),
+        })
+        .collect())
+}
+
+fn print_fast_demo_summary(summary: &FastDemoSummary) {
+    println!("Fast demo completed\n");
+    if let Some(info) = &summary.infolobby {
+        println!("InfoLobby:");
+        println!("  audiences selected: {}", info.audiences_selected);
+        println!("  rows copied: {}", info.rows_copied);
+        println!("  entities upserted: {}", info.entities_upserted);
+        println!("  relationships upserted: {}", info.relationships_upserted);
+        println!();
+    }
+    if let Some(offshore) = &summary.offshore {
+        println!("Offshore:");
+        println!("  nodes selected: {}", offshore.nodes_selected);
+        println!(
+            "  relationships selected: {}",
+            offshore.relationships_selected
+        );
+        println!("  entities upserted: {}", offshore.entities_upserted);
+        println!(
+            "  relationships upserted: {}",
+            offshore.relationships_upserted
+        );
+        println!();
+    }
+    if !summary.recommendations.is_empty() {
+        println!("Try these entities in the frontend/backend:");
+        for (idx, rec) in summary.recommendations.iter().enumerate() {
+            println!(
+                "{}. {} ({}, degree {})",
+                idx + 1,
+                rec.display_name,
+                rec.entity_type,
+                rec.degree
+            );
+            println!("   search: /api/search?q={}", urlish(&rec.display_name));
+            println!("   graph: /api/graph/{}?depth=2", rec.id);
+        }
+    }
+}
+
+fn urlish(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                vec![byte as char]
+            }
+            b' ' => vec!['%', '2', '0'],
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
 fn pg_error_detail(err: &anyhow::Error) -> String {
     for cause in err.chain() {
         if let Some(pg) = cause.downcast_ref::<postgres::Error>() {
             if let Some(db) = pg.as_db_error() {
                 let mut msg = format!("{}: {}", db.severity(), db.message());
-                if let Some(d) = db.detail() { msg.push_str(&format!(" | detail: {d}")); }
-                if let Some(h) = db.hint() { msg.push_str(&format!(" | hint: {h}")); }
+                if let Some(d) = db.detail() {
+                    msg.push_str(&format!(" | detail: {d}"));
+                }
+                if let Some(h) = db.hint() {
+                    msg.push_str(&format!(" | hint: {h}"));
+                }
                 return msg;
             }
         }
@@ -985,54 +1736,57 @@ fn pg_error_detail(err: &anyhow::Error) -> String {
     err.to_string()
 }
 
-fn run_offshore_rust(opts: OffshoreOptions, tx: Sender<Msg>) -> Result<()> {
+fn run_offshore_rust(opts: OffshoreOptions, tx: Sender<Msg>) -> Result<OffshoreRunSummary> {
     let run_token = uuid::Uuid::new_v4().to_string().replace('-', "_");
     let mut client = Client::connect(&opts.db_url, NoTls)?;
-    client.batch_execute("SET statement_timeout = 0; SET work_mem = '512MB'; SET search_path = pg_temp, public;")?;
+    client.batch_execute(
+        "SET statement_timeout = 0; SET work_mem = '512MB'; SET search_path = pg_temp, public;",
+    )?;
     let run_id: i32 = client
         .query_one(
             "INSERT INTO ingestion_runs (source_name, status, metadata) VALUES ('offshore', 'running', $1::text::jsonb) RETURNING id",
-            &[&serde_json::json!({"mode":"rust_tui_rebuild","country_codes":opts.country_codes,"limit":opts.limit,"run_token":run_token}).to_string()],
+            &[&serde_json::json!({"mode":opts.mode,"country_codes":opts.country_codes,"limit":opts.limit,"run_token":run_token,"cleanup":opts.cleanup}).to_string()],
         )?
         .get(0);
-    let result = (|| -> Result<(u64, u64)> {
-        cleanup_offshore(&mut client)?;
-        emit_offshore(
-            &tx,
-            serde_json::json!({"phase":"cleanup","stage":"cleanup"}),
-        )?;
+    let result = (|| -> Result<(u64, OffshoreRunSummary)> {
+        if opts.cleanup {
+            cleanup_offshore(&mut client)?;
+            emit_offshore(
+                &tx,
+                serde_json::json!({"phase":"cleanup","stage":"cleanup"}),
+            )?;
+        }
         let (tables, copied) = copy_offshore_csvs(&mut client, &opts.data_dir, &tx)?;
-        normalize_offshore_sql(
+        let stats = normalize_offshore_sql(
             &mut client,
             &tables,
             &opts.country_codes,
             opts.limit,
             &run_token,
+            opts.idempotent_sources,
             &tx,
         )?;
-        let processed: i64 = client.query_one(
-            "SELECT count(*) FROM relationships r JOIN sources s ON s.id = r.source_id WHERE s.source_name = 'offshore'",
-            &[],
-        )?.get(0);
         finish_simple_run(
             &mut client,
             run_id,
             "completed",
             copied,
-            processed as u64,
+            stats.relationships_selected,
             None,
         )?;
         emit_offshore(
             &tx,
-            serde_json::json!({"phase":"done","stage":"done","status":"completed","records_fetched":copied,"records_processed":processed,"total":processed}),
+            serde_json::json!({"phase":"done","stage":"done","status":"completed","records_fetched":copied,"records_processed":stats.relationships_selected,"total":stats.relationships_selected}),
         )?;
-        Ok((copied, processed as u64))
+        Ok((copied, stats))
     })();
-    if let Err(err) = result {
-        let _ = finish_simple_run(&mut client, run_id, "failed", 0, 0, Some(&err.to_string()));
-        return Err(err);
+    match result {
+        Ok((_, stats)) => Ok(stats),
+        Err(err) => {
+            let _ = finish_simple_run(&mut client, run_id, "failed", 0, 0, Some(&err.to_string()));
+            Err(err)
+        }
     }
-    Ok(())
 }
 
 fn offshore_headers() -> Vec<(&'static str, Vec<&'static str>)> {
@@ -1266,8 +2020,9 @@ fn normalize_offshore_sql(
     country_codes: &[String],
     limit: Option<u64>,
     run_token: &str,
+    idempotent_sources: bool,
     tx: &Sender<Msg>,
-) -> Result<()> {
+) -> Result<OffshoreRunSummary> {
     client.batch_execute(
         r#"
         CREATE TEMP TABLE tmp_offshore_country_map (iso3 text PRIMARY KEY, iso2 text NOT NULL);
@@ -1353,7 +2108,7 @@ fn normalize_offshore_sql(
         ON CONFLICT DO NOTHING;"#,
         &[],
     )?;
-    insert_offshore_graph(client, run_token)?;
+    insert_offshore_graph(client, run_token, idempotent_sources)?;
     let selected_nodes: i64 = client
         .query_one("SELECT count(*) FROM tmp_offshore_selected_nodes", &[])?
         .get(0);
@@ -1367,10 +2122,22 @@ fn normalize_offshore_sql(
         tx,
         serde_json::json!({"phase":"normalize","stage":"normalize","selected_nodes":selected_nodes,"selected_relationships":selected_relationships}),
     )?;
-    Ok(())
+    Ok(OffshoreRunSummary {
+        nodes_selected: selected_nodes as u64,
+        relationships_selected: selected_relationships as u64,
+        entities_upserted: selected_nodes as u64,
+        relationships_upserted: selected_relationships as u64,
+    })
 }
 
-fn insert_offshore_graph(client: &mut Client, run_token: &str) -> Result<()> {
+fn insert_offshore_graph(
+    client: &mut Client,
+    run_token: &str,
+    idempotent_sources: bool,
+) -> Result<()> {
+    if idempotent_sources {
+        return insert_offshore_graph_idempotent(client, run_token);
+    }
     client.execute(
         r#"WITH node_rows AS (
             SELECT 'offshore:node:' || n.node_id AS stable_key, n.* FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id
@@ -1420,6 +2187,89 @@ fn insert_offshore_graph(client: &mut Client, run_token: &str) -> Result<()> {
     Ok(())
 }
 
+fn insert_offshore_graph_idempotent(client: &mut Client, run_token: &str) -> Result<()> {
+    client.execute(
+        r#"WITH node_rows AS (
+            SELECT 'offshore:node:' || n.node_id AS stable_key, n.* FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id
+        ), existing AS (
+            SELECT DISTINCT ON (s.external_id) s.external_id, s.id
+            FROM sources s JOIN node_rows n ON n.stable_key = s.external_id
+            WHERE s.source_name = 'offshore'
+            ORDER BY s.external_id, s.id
+        ), missing AS (
+            INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
+            SELECT 'offshore','public_dataset',$1,n.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','node','node_id',node_id,'node_kind',node_kind,'sourceID',NULLIF(source_id_raw,''),'country_codes',NULLIF(country_codes,''),'countries',NULLIF(countries,''),'run_id',$3))
+            FROM node_rows n
+            WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.external_id = n.stable_key)
+            RETURNING id, external_id
+        ), source_ids AS (
+            SELECT external_id, id FROM existing
+            UNION ALL
+            SELECT external_id, id FROM missing
+        )
+        INSERT INTO tmp_offshore_source_map
+        SELECT 'node', external_id, id FROM source_ids;"#,
+        &[&OFFSHORE_SOURCE_URL, &OFFSHORE_LICENSE, &run_token],
+    )?;
+    client.execute(
+        r#"WITH rel_rows AS (
+            SELECT 'offshore:relationship:' || node_id_start || ':' || node_id_end || ':' || rel_type || ':' || seq::text AS stable_key, * FROM tmp_offshore_selected_relationships
+        ), existing AS (
+            SELECT DISTINCT ON (s.external_id) s.external_id, s.id
+            FROM sources s JOIN rel_rows r ON r.stable_key = s.external_id
+            WHERE s.source_name = 'offshore'
+            ORDER BY s.external_id, s.id
+        ), missing AS (
+            INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
+            SELECT 'offshore','public_dataset',$1,r.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','relationship','row_number',seq+1,'node_id_start',node_id_start,'node_id_end',node_id_end,'rel_type',rel_type,'link',NULLIF(link,''),'status',NULLIF(status,''),'start_date',NULLIF(start_date,''),'end_date',NULLIF(end_date,''),'sourceID',NULLIF(source_id_raw,''),'run_id',$3))
+            FROM rel_rows r
+            WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.external_id = r.stable_key)
+            RETURNING id, external_id
+        ), source_ids AS (
+            SELECT external_id, id FROM existing
+            UNION ALL
+            SELECT external_id, id FROM missing
+        )
+        INSERT INTO tmp_offshore_source_map
+        SELECT 'relationship', external_id, id FROM source_ids;"#,
+        &[&OFFSHORE_SOURCE_URL, &OFFSHORE_LICENSE, &run_token],
+    )?;
+    client.batch_execute(
+        r#"INSERT INTO entities (external_id, canonical_name, display_name, entity_type, country_code, metadata, risk_score)
+        SELECT 'offshore:' || n.node_id, n.canonical_name, n.display_name, n.entity_type, COALESCE(cm.iso2, 'XX'), n.metadata,
+               CASE WHEN n.node_kind IN ('entity', 'intermediary') THEN 30 ELSE 15 END
+        FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id
+        LEFT JOIN LATERAL (SELECT NULLIF(code, '') AS iso3 FROM regexp_split_to_table(upper(COALESCE(n.country_codes, '')), '\s*[,;|]\s*') AS c(code) WHERE NULLIF(code, '') IS NOT NULL LIMIT 1) first_code ON true
+        LEFT JOIN tmp_offshore_country_map cm ON cm.iso3 = first_code.iso3
+        WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.external_id = 'offshore:' || n.node_id);
+        UPDATE entities e
+        SET display_name = n.display_name,
+            canonical_name = n.canonical_name,
+            entity_type = n.entity_type,
+            metadata = COALESCE(e.metadata, '{}'::jsonb) || COALESCE(n.metadata, '{}'::jsonb),
+            risk_score = GREATEST(COALESCE(e.risk_score, 0), CASE WHEN n.node_kind IN ('entity', 'intermediary') THEN 30 ELSE 15 END),
+            updated_at = now()
+        FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id
+        WHERE e.external_id = 'offshore:' || n.node_id;
+        INSERT INTO entity_identifiers (entity_id, scheme, value, country_code, source_name)
+        SELECT e.id, 'ICIJ_NODE_ID', n.node_id, COALESCE(cm.iso2, 'XX'), 'offshore'
+        FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id JOIN entities e ON e.external_id = 'offshore:' || n.node_id
+        LEFT JOIN LATERAL (SELECT NULLIF(code, '') AS iso3 FROM regexp_split_to_table(upper(COALESCE(n.country_codes, '')), '\s*[,;|]\s*') AS c(code) WHERE NULLIF(code, '') IS NOT NULL LIMIT 1) first_code ON true
+        LEFT JOIN tmp_offshore_country_map cm ON cm.iso3 = first_code.iso3
+        ON CONFLICT (scheme, value, country_code) DO NOTHING;
+        INSERT INTO relationships (source_entity_id, target_entity_id, relationship_type, label, weight, confidence_score, metadata, source_id)
+        SELECT src.id, dst.id, r.rel_type, NULLIF(r.link, ''), 1, 1,
+               jsonb_strip_nulls(jsonb_build_object('source_name','offshore','rel_type',r.rel_type,'link',NULLIF(r.link,''),'status',NULLIF(r.status,''),'start_date',NULLIF(r.start_date,''),'end_date',NULLIF(r.end_date,''),'sourceID',NULLIF(r.source_id_raw,''))),
+               sm.source_id
+        FROM tmp_offshore_selected_relationships r
+        JOIN entities src ON src.external_id = 'offshore:' || r.node_id_start
+        JOIN entities dst ON dst.external_id = 'offshore:' || r.node_id_end
+        JOIN tmp_offshore_source_map sm ON sm.kind = 'relationship' AND sm.stable_key = 'offshore:relationship:' || r.node_id_start || ':' || r.node_id_end || ':' || r.rel_type || ':' || r.seq::text
+        ON CONFLICT DO NOTHING;"#,
+    )?;
+    Ok(())
+}
+
 #[derive(Clone)]
 struct InfolobbyOptions {
     db_url: String,
@@ -1429,6 +2279,9 @@ struct InfolobbyOptions {
     chunk_bytes: usize,
     skip_raw_records: bool,
     skip_count: bool,
+    cleanup: bool,
+    idempotent_sources: bool,
+    fast_demo_relationships: bool,
 }
 
 struct InfolobbyCopyTotals {
@@ -1437,10 +2290,12 @@ struct InfolobbyCopyTotals {
     extra_columns: u64,
 }
 
-fn run_infolobby_rust(opts: InfolobbyOptions, tx: Sender<Msg>) -> Result<()> {
+fn run_infolobby_rust(opts: InfolobbyOptions, tx: Sender<Msg>) -> Result<InfolobbyRunSummary> {
     let selected = selected_infolobby_files(&opts.files)?;
     let mut client = Client::connect(&opts.db_url, NoTls)?;
-    client.batch_execute("SET statement_timeout = 0; SET work_mem = '512MB'; SET search_path = pg_temp, public")?;
+    client.batch_execute(
+        "SET statement_timeout = 0; SET work_mem = '512MB'; SET search_path = pg_temp, public",
+    )?;
     let run_token = format!(
         "{}",
         std::time::SystemTime::now()
@@ -1467,19 +2322,29 @@ fn run_infolobby_rust(opts: InfolobbyOptions, tx: Sender<Msg>) -> Result<()> {
         )?
         .get(0);
 
-    let result = (|| -> Result<InfolobbyCopyTotals> {
+    let result = (|| -> Result<(InfolobbyCopyTotals, NormalizeStats)> {
         let expected = if opts.skip_count {
             0
         } else {
             count_infolobby_rows(&opts, &selected, &tx)?
         };
-        cleanup_infolobby(&mut client)?;
-        emit(
-            &tx,
-            serde_json::json!({"phase":"cleanup","stage":"cleanup","total":expected,"total_rows":expected}),
-        )?;
+        if opts.cleanup {
+            cleanup_infolobby(&mut client)?;
+            emit(
+                &tx,
+                serde_json::json!({"phase":"cleanup","stage":"cleanup","total":expected,"total_rows":expected}),
+            )?;
+        }
         let totals = copy_infolobby_files(&mut client, &opts, &selected, &tables, expected, &tx)?;
-        normalize_infolobby(&mut client, &tables, &run_token, opts.skip_raw_records, &tx)?;
+        let stats = normalize_infolobby(
+            &mut client,
+            &tables,
+            &run_token,
+            opts.skip_raw_records,
+            opts.idempotent_sources,
+            opts.fast_demo_relationships,
+            &tx,
+        )?;
         finish_infolobby_run(&mut client, run_id, "completed", &totals, None)?;
         emit(
             &tx,
@@ -1491,24 +2356,31 @@ fn run_infolobby_rust(opts: InfolobbyOptions, tx: Sender<Msg>) -> Result<()> {
                 "total":totals.copied,
             }),
         )?;
-        Ok(totals)
+        Ok((totals, stats))
     })();
 
-    if let Err(err) = result {
-        let _ = finish_infolobby_run(
-            &mut client,
-            run_id,
-            "failed",
-            &InfolobbyCopyTotals {
-                copied: 0,
-                skipped: 0,
-                extra_columns: 0,
-            },
-            Some(&err.to_string()),
-        );
-        return Err(err);
+    match result {
+        Ok((totals, stats)) => Ok(InfolobbyRunSummary {
+            audiences_selected: opts.limit.unwrap_or(0),
+            rows_copied: totals.copied,
+            entities_upserted: stats.entities_upserted,
+            relationships_upserted: stats.relationships_upserted,
+        }),
+        Err(err) => {
+            let _ = finish_infolobby_run(
+                &mut client,
+                run_id,
+                "failed",
+                &InfolobbyCopyTotals {
+                    copied: 0,
+                    skipped: 0,
+                    extra_columns: 0,
+                },
+                Some(&err.to_string()),
+            );
+            Err(err)
+        }
     }
-    Ok(())
 }
 
 fn selected_infolobby_files(files: &[String]) -> Result<Vec<&'static str>> {
@@ -1988,12 +2860,14 @@ fn normalize_infolobby(
     tables: &HashMap<String, String>,
     run_token: &str,
     skip_raw_records: bool,
+    idempotent_sources: bool,
+    fast_demo_relationships: bool,
     tx: &Sender<Msg>,
-) -> Result<()> {
+) -> Result<NormalizeStats> {
     create_infolobby_candidate_tables(client)?;
     client.batch_execute(sql_helpers())?;
     for (file_name, table) in tables {
-        insert_sources_for_table(client, file_name, table, run_token)?;
+        insert_sources_for_table(client, file_name, table, run_token, idempotent_sources)?;
     }
     for sql in entity_candidate_sql(tables) {
         client.batch_execute(&qualify_helpers(&sql))?;
@@ -2044,6 +2918,44 @@ fn normalize_infolobby(
     for sql in relationship_candidate_sql(tables) {
         client.batch_execute(&qualify_helpers(&sql))?;
     }
+    if fast_demo_relationships {
+        add_infolobby_fast_demo_relationships(client, tables)?;
+    }
+    let entities_upserted: i64 = client
+        .query_one(
+            "SELECT count(DISTINCT key) FROM tmp_infolobby_entity_candidates WHERE key IS NOT NULL AND key <> ''",
+            &[],
+        )?
+        .get(0);
+    if fast_demo_relationships {
+        client.batch_execute(
+            r#"
+            UPDATE tmp_infolobby_relationship_candidates
+            SET relationship_type = CASE relationship_type
+                    WHEN 'attended_lobby_audience' THEN 'attended'
+                    WHEN 'attended_audience_as_public_official' THEN 'attended'
+                    WHEN 'attended_audience_other' THEN 'attended'
+                    WHEN 'registered_lobby_audience' THEN 'registered_by'
+                    WHEN 'represents_in_audience' THEN 'represented'
+                    WHEN 'represented_in_audience' THEN 'represented_in'
+                    WHEN 'works_for' THEN 'employed_by'
+                    WHEN 'holds_public_role' THEN 'employed_by'
+                    ELSE relationship_type
+                END,
+                label = CASE relationship_type
+                    WHEN 'attended_lobby_audience' THEN 'Asiste a audiencia'
+                    WHEN 'attended_audience_as_public_official' THEN 'Asiste a audiencia'
+                    WHEN 'attended_audience_other' THEN 'Asiste a audiencia'
+                    WHEN 'registered_lobby_audience' THEN 'Registrada por'
+                    WHEN 'represents_in_audience' THEN 'Representa'
+                    WHEN 'represented_in_audience' THEN 'Representado en audiencia'
+                    WHEN 'works_for' THEN 'Trabaja para'
+                    WHEN 'holds_public_role' THEN 'Empleado por'
+                    ELSE label
+                END
+            "#,
+        )?;
+    }
     let inserted = client.execute(
         r#"
         INSERT INTO relationships (
@@ -2069,8 +2981,15 @@ fn normalize_infolobby(
             tx,
             serde_json::json!({"phase":"raw records","stage":"raw records","inserted_raw_records":raw_records}),
         )?;
+        return Ok(NormalizeStats {
+            entities_upserted: entities_upserted as u64,
+            relationships_upserted: inserted,
+        });
     }
-    Ok(())
+    Ok(NormalizeStats {
+        entities_upserted: entities_upserted as u64,
+        relationships_upserted: inserted,
+    })
 }
 
 fn create_infolobby_candidate_tables(client: &mut Client) -> Result<()> {
@@ -2118,11 +3037,60 @@ fn insert_sources_for_table(
     file_name: &str,
     table: &str,
     run_token: &str,
+    idempotent: bool,
 ) -> Result<()> {
     let record_type = record_type(file_name);
     let source_expr = source_external_expr(file_name);
-    let sql = format!(
-        r#"
+    let sql = if idempotent {
+        format!(
+            r#"
+        INSERT INTO tmp_infolobby_source_rows (file_name, seq, external_id)
+        SELECT '{file_name}', _seq, COALESCE({source_expr}, '{file_name}:row:' || (_seq + 1)::text)
+        FROM {table};
+
+        WITH row_keys AS (
+            SELECT DISTINCT ON (external_id) external_id, file_name, seq
+            FROM tmp_infolobby_source_rows
+            WHERE file_name = '{file_name}'
+            ORDER BY external_id, seq
+        ), existing AS (
+            SELECT DISTINCT ON (s.external_id) s.external_id, s.id
+            FROM sources s JOIN row_keys r ON r.external_id = s.external_id
+            WHERE s.source_name = 'infolobby'
+            ORDER BY s.external_id, s.id
+        ), missing AS (
+            INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
+            SELECT 'infolobby',
+                   'public_dataset',
+                   '{INFOLOBBY_SOURCE_URL}',
+                   external_id,
+                   '{INFOLOBBY_LICENSE}',
+                   jsonb_build_object(
+                       'source_type', 'public_dataset',
+                       'license', '{INFOLOBBY_LICENSE}',
+                       'record_type', '{record_type}',
+                       'file', file_name,
+                       'row_number', seq + 1,
+                       'run_id', '{run_token}'
+                   )
+            FROM row_keys r
+            WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.external_id = r.external_id)
+            RETURNING id, external_id
+        ), source_ids AS (
+            SELECT external_id, id FROM existing
+            UNION ALL
+            SELECT external_id, id FROM missing
+        )
+        INSERT INTO tmp_infolobby_source_map (file_name, seq, source_id)
+        SELECT r.file_name, r.seq, s.id
+        FROM tmp_infolobby_source_rows r
+        JOIN source_ids s ON s.external_id = r.external_id
+        WHERE r.file_name = '{file_name}';
+        "#
+        )
+    } else {
+        format!(
+            r#"
         INSERT INTO tmp_infolobby_source_rows (file_name, seq, external_id)
         SELECT '{file_name}', _seq, COALESCE({source_expr}, '{file_name}:row:' || (_seq + 1)::text)
         FROM {table};
@@ -2150,7 +3118,8 @@ fn insert_sources_for_table(
         SELECT metadata->>'file', (metadata->>'row_number')::bigint - 1, id
         FROM inserted;
         "#
-    );
+        )
+    };
     client.batch_execute(&qualify_helpers(&sql))?;
     Ok(())
 }
@@ -2661,6 +3630,42 @@ fn relationship_candidate_sql(tables: &HashMap<String, String>) -> Vec<String> {
     out
 }
 
+fn add_infolobby_fast_demo_relationships(
+    client: &mut Client,
+    tables: &HashMap<String, String>,
+) -> Result<()> {
+    let Some(active_table) = tables.get("asistenciasActivos.csv") else {
+        return Ok(());
+    };
+    let Some(passive_table) = tables.get("asistenciasPasivos.csv") else {
+        return Ok(());
+    };
+    let sql = format!(
+        r#"
+        INSERT INTO tmp_infolobby_relationship_candidates
+        SELECT 'asistenciasActivos.csv',
+               a._seq,
+               person_key('active', a."codigoActivo", a."activo"),
+               person_key('passive', p."codigoPasivo", p."pasivo"),
+               'met_with',
+               'Se reunio con',
+               row_metadata('asistenciasActivos.csv', a._seq, jsonb_build_object(
+                   'codigoAudiencia', a."codigoAudiencia",
+                   'activo', a."activo",
+                   'pasivo', p."pasivo",
+                   'organismo', p."organismo"
+               ))
+        FROM {active_table} a
+        JOIN {passive_table} p ON clean_code(a."codigoAudiencia") = clean_code(p."codigoAudiencia")
+        WHERE clean_code(a."codigoAudiencia") <> ''
+          AND person_key('active', a."codigoActivo", a."activo") IS NOT NULL
+          AND person_key('passive', p."codigoPasivo", p."pasivo") IS NOT NULL;
+        "#
+    );
+    client.batch_execute(&qualify_helpers(&sql))?;
+    Ok(())
+}
+
 fn sql_helpers() -> &'static str {
     r#"
     CREATE OR REPLACE FUNCTION pg_temp.clean_code(value text) RETURNS text AS $$
@@ -2715,9 +3720,12 @@ fn sql_helpers() -> &'static str {
 // ==================== CHILECOMPRA NATIVO EN RUST ====================
 
 const CHILECOMPRA_LICENSE: &str = "Mercado Publico / ChileCompra";
-const CHILE_LICITACIONES_URL: &str = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json";
-const CHILE_ORDENES_COMPRA_URL: &str = "https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json";
-const CHILE_ORDEN_COMPRA_URL: &str = "https://api.mercadopublico.cl/servicios/v1/publico/OrdenCompra.json";
+const CHILE_LICITACIONES_URL: &str =
+    "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json";
+const CHILE_ORDENES_COMPRA_URL: &str =
+    "https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json";
+const CHILE_ORDEN_COMPRA_URL: &str =
+    "https://api.mercadopublico.cl/servicios/v1/publico/OrdenCompra.json";
 
 struct ChileCompraOpts {
     db_url: String,
@@ -2750,8 +3758,14 @@ struct PipelineStats {
 
 fn parse_time_hhmm(s: &str) -> u32 {
     let mut parts = s.splitn(2, ':');
-    let h: u32 = parts.next().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
-    let m: u32 = parts.next().and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+    let h: u32 = parts
+        .next()
+        .and_then(|p| p.trim().parse().ok())
+        .unwrap_or(0);
+    let m: u32 = parts
+        .next()
+        .and_then(|p| p.trim().parse().ok())
+        .unwrap_or(0);
     h * 60 + m
 }
 
@@ -2793,7 +3807,9 @@ fn today_santiago_iso() -> String {
 fn date_from_iso(s: &str) -> Option<u32> {
     // Returns days-since-epoch for YYYY-MM-DD string
     let parts: Vec<&str> = s.splitn(3, '-').collect();
-    if parts.len() != 3 { return None; }
+    if parts.len() != 3 {
+        return None;
+    }
     let y: u32 = parts[0].parse().ok()?;
     let m: u32 = parts[1].parse().ok()?;
     let d: u32 = parts[2].parse().ok()?;
@@ -2825,14 +3841,18 @@ fn ymd_to_days(y: u32, m: u32, d: u32) -> u32 {
     (era * 146097 + doe as i64 - 719468) as u32
 }
 
-fn is_night_window_chile(night_start: &str, night_end: &str) -> bool {
+fn is_night_window_chile(_night_start: &str, _night_end: &str) -> bool {
     return true;
 }
 
 fn seconds_until_night_start_chile(night_start: &str) -> u64 {
     let current = current_minutes_santiago() as i64;
     let start = parse_time_hhmm(night_start) as i64;
-    let diff = if start > current { start - current } else { 1440 - current + start };
+    let diff = if start > current {
+        start - current
+    } else {
+        1440 - current + start
+    };
     (diff * 60) as u64
 }
 
@@ -2921,14 +3941,18 @@ fn chile_get_json(url: &str, _ticket: &str) -> Result<serde_json::Value> {
             Err(ureq::Error::Status(code, _)) if [408, 429, 500, 502, 503, 504].contains(&code) => {
                 last_err = format!("HTTP {code}");
                 if attempt < 3 {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(1.5 * 2f64.powi(attempt as i32)));
+                    std::thread::sleep(std::time::Duration::from_secs_f64(
+                        1.5 * 2f64.powi(attempt as i32),
+                    ));
                     continue;
                 }
             }
             Err(e) => {
                 last_err = e.to_string();
                 if attempt < 3 {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(1.5 * 2f64.powi(attempt as i32)));
+                    std::thread::sleep(std::time::Duration::from_secs_f64(
+                        1.5 * 2f64.powi(attempt as i32),
+                    ));
                     continue;
                 }
             }
@@ -2959,7 +3983,8 @@ fn discover_one_kind(
     }
     let payload = chile_get_json(&url, ticket)?;
     let empty = vec![];
-    let listado = payload.get("Listado")
+    let listado = payload
+        .get("Listado")
         .or_else(|| payload.get("listado"))
         .and_then(|v| v.as_array())
         .unwrap_or(&empty);
@@ -3005,23 +4030,46 @@ fn discover_one_kind(
 }
 
 fn chile_priority(item: &serde_json::Value) -> i32 {
-    let status = item.get("Estado").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-    let status_code = item.get("CodigoEstado").and_then(|v| v.as_i64()).unwrap_or(0);
-    let amount = item.get("MontoEstimado")
+    let status = item
+        .get("Estado")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let status_code = item
+        .get("CodigoEstado")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let amount = item
+        .get("MontoEstimado")
         .or_else(|| item.get("Total"))
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
-    let buyer = item.get("Comprador")
+    let buyer = item
+        .get("Comprador")
         .and_then(|b| b.get("NombreOrganismo"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
     let mut priority = 100i32;
-    if status.contains("adjudic") || status_code == 8 { priority -= 40; }
-    if amount >= 1_000_000_000.0 { priority -= 30; }
-    else if amount >= 100_000_000.0 { priority -= 15; }
-    for term in ["municipalidad", "salud", "hospital", "obras publicas", "gobierno regional"] {
-        if buyer.contains(term) { priority -= 10; break; }
+    if status.contains("adjudic") || status_code == 8 {
+        priority -= 40;
+    }
+    if amount >= 1_000_000_000.0 {
+        priority -= 30;
+    } else if amount >= 100_000_000.0 {
+        priority -= 15;
+    }
+    for term in [
+        "municipalidad",
+        "salud",
+        "hospital",
+        "obras publicas",
+        "gobierno regional",
+    ] {
+        if buyer.contains(term) {
+            priority -= 10;
+            break;
+        }
     }
     priority.max(1)
 }
@@ -3066,7 +4114,8 @@ fn hydrate_queue(
         match chile_get_json(&fetch_url, ticket) {
             Ok(payload) => {
                 let empty = vec![];
-                let listado = payload.get("Listado")
+                let listado = payload
+                    .get("Listado")
                     .or_else(|| payload.get("listado"))
                     .and_then(|v| v.as_array())
                     .unwrap_or(&empty);
@@ -3077,7 +4126,9 @@ fn hydrate_queue(
                     )?;
                     stats.skipped += 1;
                 } else {
-                    let safe_url = source_url.as_deref().unwrap_or("https://api.mercadopublico.cl/");
+                    let safe_url = source_url
+                        .as_deref()
+                        .unwrap_or("https://api.mercadopublico.cl/");
                     for record in listado {
                         normalize_and_store_chile(client, record, &record_type, safe_url)?;
                     }
@@ -3139,91 +4190,247 @@ fn normalize_and_store_chile(
     Ok(())
 }
 
-fn normalize_tender(client: &mut postgres::Client, p: &serde_json::Value, source_url: &str) -> Result<()> {
-    let code = p.get("CodigoExterno").or_else(|| p.get("Codigo")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+fn normalize_tender(
+    client: &mut postgres::Client,
+    p: &serde_json::Value,
+    source_url: &str,
+) -> Result<()> {
+    let code = p
+        .get("CodigoExterno")
+        .or_else(|| p.get("Codigo"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let tender_key = format!("tender:{code}");
-    let tender_name = p.get("Nombre").and_then(|v| v.as_str()).unwrap_or(&format!("Licitacion {code}")).to_string();
+    let tender_name = p
+        .get("Nombre")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&format!("Licitacion {code}"))
+        .to_string();
     let buyer = p.get("Comprador").cloned().unwrap_or_default();
-    let amount = p.get("MontoEstimado").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let amount = p
+        .get("MontoEstimado")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     let risk = chile_risk_score(amount);
 
     let source_id = upsert_chile_source(client, &code, source_url, "tender")?;
-    let tender_id = upsert_chile_entity(client, &tender_key, &tender_name, "tender", risk,
+    let tender_id = upsert_chile_entity(
+        client,
+        &tender_key,
+        &tender_name,
+        "tender",
+        risk,
         &serde_json::json!({"source_name":"chilecompra","status":p.get("Estado"),"status_code":p.get("CodigoEstado"),"estimated_amount":p.get("MontoEstimado"),"currency":p.get("Moneda")}),
-        &[("CHILECOMPRA_TENDER_CODE".to_string(), code.clone())])?;
+        &[("CHILECOMPRA_TENDER_CODE".to_string(), code.clone())],
+    )?;
     let buyer_id = upsert_chile_buyer(client, &buyer)?;
-    insert_chile_rel(client, buyer_id, tender_id, "issued_by", "Organismo comprador publica licitacion", source_id)?;
+    insert_chile_rel(
+        client,
+        buyer_id,
+        tender_id,
+        "issued_by",
+        "Organismo comprador publica licitacion",
+        source_id,
+    )?;
 
     // Suppliers from item adjudications
-    let items = p.get("Items").and_then(|i| i.get("Listado")).and_then(|v| v.as_array());
+    let items = p
+        .get("Items")
+        .and_then(|i| i.get("Listado"))
+        .and_then(|v| v.as_array());
     if let Some(items) = items {
         for item in items {
             let adj = item.get("Adjudicacion").cloned().unwrap_or_default();
             let sup_name = adj.get("NombreProveedor").and_then(|v| v.as_str());
-            let sup_rut = normalize_rut_chile(adj.get("RutProveedor").and_then(|v| v.as_str()).unwrap_or(""));
-            if sup_name.is_none() && sup_rut.is_none() { continue; }
-            let sup_key = format!("supplier:{}", sup_rut.as_deref().unwrap_or_else(|| sup_name.unwrap_or("unknown")));
+            let sup_rut = normalize_rut_chile(
+                adj.get("RutProveedor")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            );
+            if sup_name.is_none() && sup_rut.is_none() {
+                continue;
+            }
+            let sup_key = format!(
+                "supplier:{}",
+                sup_rut
+                    .as_deref()
+                    .unwrap_or_else(|| sup_name.unwrap_or("unknown"))
+            );
             let sup_name_str = sup_name.unwrap_or("Proveedor sin nombre").to_string();
-            let sup_id = upsert_chile_entity(client, &sup_key, &sup_name_str, "company", 25,
+            let sup_id = upsert_chile_entity(
+                client,
+                &sup_key,
+                &sup_name_str,
+                "company",
+                25,
                 &serde_json::json!({"source_name":"chilecompra"}),
-                &sup_rut.iter().map(|r| ("CL_RUT".to_string(), r.clone())).collect::<Vec<_>>())?;
-            insert_chile_rel(client, tender_id, sup_id, "awarded_to", "Linea adjudicada a proveedor",
-                source_id)?;
+                &sup_rut
+                    .iter()
+                    .map(|r| ("CL_RUT".to_string(), r.clone()))
+                    .collect::<Vec<_>>(),
+            )?;
+            insert_chile_rel(
+                client,
+                tender_id,
+                sup_id,
+                "awarded_to",
+                "Linea adjudicada a proveedor",
+                source_id,
+            )?;
         }
     }
     Ok(())
 }
 
-fn normalize_purchase_order(client: &mut postgres::Client, p: &serde_json::Value, source_url: &str) -> Result<()> {
-    let code = p.get("Codigo").and_then(|v| v.as_str()).unwrap_or("").to_string();
+fn normalize_purchase_order(
+    client: &mut postgres::Client,
+    p: &serde_json::Value,
+    source_url: &str,
+) -> Result<()> {
+    let code = p
+        .get("Codigo")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let po_key = format!("purchase_order:{code}");
-    let po_name = p.get("Nombre").and_then(|v| v.as_str()).unwrap_or(&format!("OC {code}")).to_string();
+    let po_name = p
+        .get("Nombre")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&format!("OC {code}"))
+        .to_string();
     let buyer = p.get("Comprador").cloned().unwrap_or_default();
     let supplier = p.get("Proveedor").cloned().unwrap_or_default();
     let amount = p.get("Total").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let risk = chile_risk_score(amount);
 
     let source_id = upsert_chile_source(client, &code, source_url, "purchase_order")?;
-    let po_id = upsert_chile_entity(client, &po_key, &po_name, "purchase_order", risk,
+    let po_id = upsert_chile_entity(
+        client,
+        &po_key,
+        &po_name,
+        "purchase_order",
+        risk,
         &serde_json::json!({"source_name":"chilecompra","status_code":p.get("CodigoEstado"),"total":p.get("Total"),"currency":p.get("TipoMoneda"),"tender_code":p.get("CodigoLicitacion")}),
-        &[("CHILECOMPRA_OC_CODE".to_string(), code.clone())])?;
+        &[("CHILECOMPRA_OC_CODE".to_string(), code.clone())],
+    )?;
     let buyer_id = upsert_chile_buyer(client, &buyer)?;
-    let sup_rut = normalize_rut_chile(supplier.get("RutSucursal").and_then(|v| v.as_str()).unwrap_or(""));
-    let sup_name = supplier.get("Nombre").and_then(|v| v.as_str()).unwrap_or("Proveedor").to_string();
+    let sup_rut = normalize_rut_chile(
+        supplier
+            .get("RutSucursal")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    );
+    let sup_name = supplier
+        .get("Nombre")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Proveedor")
+        .to_string();
     let sup_key = format!("supplier:{}", sup_rut.as_deref().unwrap_or(&sup_name));
-    let sup_id = upsert_chile_entity(client, &sup_key, &sup_name, "company", 25,
+    let sup_id = upsert_chile_entity(
+        client,
+        &sup_key,
+        &sup_name,
+        "company",
+        25,
         &serde_json::json!({"source_name":"chilecompra","commune":supplier.get("Comuna"),"region":supplier.get("Region")}),
-        &sup_rut.iter().map(|r| ("CL_RUT".to_string(), r.clone())).collect::<Vec<_>>())?;
-    insert_chile_rel(client, po_id, buyer_id, "issued_by", "Orden emitida por organismo", source_id)?;
-    insert_chile_rel(client, po_id, sup_id, "awarded_to", "Orden de compra a proveedor", source_id)?;
-    insert_chile_rel(client, buyer_id, sup_id, "purchased_from", "Organismo compra a proveedor", source_id)?;
+        &sup_rut
+            .iter()
+            .map(|r| ("CL_RUT".to_string(), r.clone()))
+            .collect::<Vec<_>>(),
+    )?;
+    insert_chile_rel(
+        client,
+        po_id,
+        buyer_id,
+        "issued_by",
+        "Orden emitida por organismo",
+        source_id,
+    )?;
+    insert_chile_rel(
+        client,
+        po_id,
+        sup_id,
+        "awarded_to",
+        "Orden de compra a proveedor",
+        source_id,
+    )?;
+    insert_chile_rel(
+        client,
+        buyer_id,
+        sup_id,
+        "purchased_from",
+        "Organismo compra a proveedor",
+        source_id,
+    )?;
 
     // Link to tender if referenced
     if let Some(tender_code) = p.get("CodigoLicitacion").and_then(|v| v.as_str()) {
         if !tender_code.is_empty() {
             let tender_key = format!("tender:{tender_code}");
             let tender_name = format!("Licitacion {tender_code}");
-            let tender_id = upsert_chile_entity(client, &tender_key, &tender_name, "tender", 0,
+            let tender_id = upsert_chile_entity(
+                client,
+                &tender_key,
+                &tender_name,
+                "tender",
+                0,
                 &serde_json::json!({"source_name":"chilecompra"}),
-                &[("CHILECOMPRA_TENDER_CODE".to_string(), tender_code.to_string())])?;
-            insert_chile_rel(client, po_id, tender_id, "related_to", "Orden asociada a licitacion", source_id)?;
+                &[(
+                    "CHILECOMPRA_TENDER_CODE".to_string(),
+                    tender_code.to_string(),
+                )],
+            )?;
+            insert_chile_rel(
+                client,
+                po_id,
+                tender_id,
+                "related_to",
+                "Orden asociada a licitacion",
+                source_id,
+            )?;
         }
     }
     Ok(())
 }
 
 fn upsert_chile_buyer(client: &mut postgres::Client, buyer: &serde_json::Value) -> Result<i32> {
-    let rut = normalize_rut_chile(buyer.get("RutUnidad").and_then(|v| v.as_str()).unwrap_or(""));
-    let organism_code = buyer.get("CodigoOrganismo").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let name = buyer.get("NombreOrganismo").or_else(|| buyer.get("NombreUnidad"))
-        .and_then(|v| v.as_str()).unwrap_or("Organismo comprador").to_string();
-    let key = format!("buyer:{}", rut.as_deref().or(organism_code.as_deref()).unwrap_or(&name));
+    let rut = normalize_rut_chile(
+        buyer
+            .get("RutUnidad")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    );
+    let organism_code = buyer
+        .get("CodigoOrganismo")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let name = buyer
+        .get("NombreOrganismo")
+        .or_else(|| buyer.get("NombreUnidad"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Organismo comprador")
+        .to_string();
+    let key = format!(
+        "buyer:{}",
+        rut.as_deref().or(organism_code.as_deref()).unwrap_or(&name)
+    );
     let mut identifiers = Vec::new();
-    if let Some(r) = &rut { identifiers.push(("CL_RUT".to_string(), r.clone())); }
-    if let Some(c) = &organism_code { identifiers.push(("CHILECOMPRA_ORGANISM_CODE".to_string(), c.clone())); }
-    upsert_chile_entity(client, &key, &name, "public_body", 0,
+    if let Some(r) = &rut {
+        identifiers.push(("CL_RUT".to_string(), r.clone()));
+    }
+    if let Some(c) = &organism_code {
+        identifiers.push(("CHILECOMPRA_ORGANISM_CODE".to_string(), c.clone()));
+    }
+    upsert_chile_entity(
+        client,
+        &key,
+        &name,
+        "public_body",
+        0,
         &serde_json::json!({"source_name":"chilecompra","unit_name":buyer.get("NombreUnidad"),"commune":buyer.get("ComunaUnidad")}),
-        &identifiers)
+        &identifiers,
+    )
 }
 
 fn upsert_chile_entity(
@@ -3235,7 +4442,11 @@ fn upsert_chile_entity(
     metadata: &serde_json::Value,
     identifiers: &[(String, String)],
 ) -> Result<i32> {
-    let canonical = display_name.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let canonical = display_name
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let row = client.query_one(
         r#"
         INSERT INTO entities (external_id, canonical_name, display_name, entity_type, country_code, metadata, risk_score)
@@ -3263,7 +4474,12 @@ fn upsert_chile_entity(
     Ok(entity_id)
 }
 
-fn upsert_chile_source(client: &mut postgres::Client, external_id: &str, source_url: &str, record_type: &str) -> Result<i32> {
+fn upsert_chile_source(
+    client: &mut postgres::Client,
+    external_id: &str,
+    source_url: &str,
+    record_type: &str,
+) -> Result<i32> {
     let meta = serde_json::json!({"source_type":"public_api","license":CHILECOMPRA_LICENSE,"record_type":record_type,"source_name":"chilecompra"});
     let row = client.query_one(
         "INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata) \
@@ -3292,15 +4508,25 @@ fn insert_chile_rel(
 }
 
 fn chile_risk_score(amount: f64) -> i32 {
-    if amount >= 1_000_000_000.0 { 70 }
-    else if amount >= 100_000_000.0 { 45 }
-    else if amount > 0.0 { 20 }
-    else { 0 }
+    if amount >= 1_000_000_000.0 {
+        70
+    } else if amount >= 100_000_000.0 {
+        45
+    } else if amount > 0.0 {
+        20
+    } else {
+        0
+    }
 }
 
 fn normalize_rut_chile(value: &str) -> Option<String> {
-    let digits: String = value.chars().filter(|c| c.is_ascii_digit() || *c == 'k' || *c == 'K').collect();
-    if digits.len() < 2 { return None; }
+    let digits: String = value
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == 'k' || *c == 'K')
+        .collect();
+    if digits.len() < 2 {
+        return None;
+    }
     let (body, dv) = digits.split_at(digits.len() - 1);
     let body = body.trim_start_matches('0');
     let dv = dv.to_uppercase();
@@ -3317,16 +4543,23 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
 
     // Backfill mode: iterate dates
     if opts.backfill_from.is_some() || opts.backfill_to.is_some() {
-        let start_days = opts.backfill_from.as_deref()
+        let start_days = opts
+            .backfill_from
+            .as_deref()
             .and_then(|s| date_from_iso(s))
             .unwrap_or_else(|| {
                 // 2020-01-01 default
                 ymd_to_days(2020, 1, 1)
             });
-        let end_days = opts.backfill_to.as_deref()
+        let end_days = opts
+            .backfill_to
+            .as_deref()
             .and_then(|s| date_from_iso(s))
             .unwrap_or_else(|| {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
                 let local = now - 4 * 3600;
                 (local / 86400) as u32
             });
@@ -3348,11 +4581,25 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
             }
 
             let mut stats = PipelineStats::default();
-            let kinds: Vec<&str> = if opts.kind == "all" { vec!["licitaciones", "ordenes_compra"] } else { vec![opts.kind.as_str()] };
+            let kinds: Vec<&str> = if opts.kind == "all" {
+                vec!["licitaciones", "ordenes_compra"]
+            } else {
+                vec![opts.kind.as_str()]
+            };
             let mut had_error = false;
             for kind in &kinds {
-                match discover_one_kind(&mut client, &opts.ticket, &fecha, kind, opts.estado.as_deref(), opts.daily_budget) {
-                    Ok((disc, q)) => { stats.discovered += disc; stats.queued += q; }
+                match discover_one_kind(
+                    &mut client,
+                    &opts.ticket,
+                    &fecha,
+                    kind,
+                    opts.estado.as_deref(),
+                    opts.daily_budget,
+                ) {
+                    Ok((disc, q)) => {
+                        stats.discovered += disc;
+                        stats.queued += q;
+                    }
                     Err(e) => {
                         had_error = true;
                         let _ = tx.send(Msg::Progress {
@@ -3379,7 +4626,15 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
                 task: TaskKind::Chile,
                 payload: serde_json::json!({"phase":"backfill","status":"running","message":format!("{date_iso}: {}/{} descubiertos/cola",stats.discovered,stats.queued),"discovered":stats.discovered,"queued":stats.queued}),
             });
-            let _ = hydrate_queue(&mut client, &opts.ticket, opts.hydration_budget, opts.daily_budget, opts.sleep_seconds, &tx, &mut stats);
+            let _ = hydrate_queue(
+                &mut client,
+                &opts.ticket,
+                opts.hydration_budget,
+                opts.daily_budget,
+                opts.sleep_seconds,
+                &tx,
+                &mut stats,
+            );
             if opts.sleep_between > 0.0 {
                 std::thread::sleep(std::time::Duration::from_secs_f64(opts.sleep_between));
             }
@@ -3419,7 +4674,10 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
         let fecha = today_santiago_ddmmyyyy();
         // Adjust for days_back
         let now_days = {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
             let local = now - 4 * 3600;
             (local / 86400) as u32
         };
@@ -3432,10 +4690,24 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
             payload: serde_json::json!({"phase":"discovery","status":"running","message":format!("ciclo {cycle}: discovery {ty}-{tm:02}-{td:02}")}),
         });
 
-        let kinds: Vec<&str> = if opts.kind == "all" { vec!["licitaciones", "ordenes_compra"] } else { vec![opts.kind.as_str()] };
+        let kinds: Vec<&str> = if opts.kind == "all" {
+            vec!["licitaciones", "ordenes_compra"]
+        } else {
+            vec![opts.kind.as_str()]
+        };
         for kind in &kinds {
-            match discover_one_kind(&mut client, &opts.ticket, &target_fecha, kind, opts.estado.as_deref(), opts.daily_budget) {
-                Ok((disc, q)) => { total.discovered += disc; total.queued += q; }
+            match discover_one_kind(
+                &mut client,
+                &opts.ticket,
+                &target_fecha,
+                kind,
+                opts.estado.as_deref(),
+                opts.daily_budget,
+            ) {
+                Ok((disc, q)) => {
+                    total.discovered += disc;
+                    total.queued += q;
+                }
                 Err(e) => {
                     let _ = tx.send(Msg::Progress {
                         task: TaskKind::Chile,
@@ -3444,7 +4716,15 @@ fn run_chilecompra_worker(opts: ChileCompraOpts, tx: Sender<Msg>) -> Result<()> 
                 }
             }
         }
-        let _ = hydrate_queue(&mut client, &opts.ticket, opts.hydration_budget, opts.daily_budget, opts.sleep_seconds, &tx, &mut total);
+        let _ = hydrate_queue(
+            &mut client,
+            &opts.ticket,
+            opts.hydration_budget,
+            opts.daily_budget,
+            opts.sleep_seconds,
+            &tx,
+            &mut total,
+        );
 
         let _ = tx.send(Msg::Progress {
             task: TaskKind::Chile,

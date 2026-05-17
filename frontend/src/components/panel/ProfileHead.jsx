@@ -21,8 +21,8 @@ export default function ProfileHead({ caseData, lang, t }) {
   return (
     <div className="profile-head">
       <div className="profile-eyebrow">
-        <span className={`type-dot ${root.type}`} />
-        {typeLabel} · {root.country}
+        <span className={`type-dot ${root.type}`} aria-hidden="true" />
+        {typeLabel}{root.country ? ` · ${root.country}` : ''}
       </div>
       <h2 className="profile-name">{root.name}</h2>
       {root.subtitle && <div className="profile-sub">{root.subtitle}</div>}

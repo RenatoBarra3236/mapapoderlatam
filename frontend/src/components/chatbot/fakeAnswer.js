@@ -4,6 +4,35 @@
 export function fakeAnswer(question, caseData, lang) {
   const lc = question.toLowerCase();
   const root = caseData.nodes.find(n => n.id === caseData.rootId);
+  if (!root) {
+    return lang === 'es'
+      ? 'Por ahora puedo resumir entidades, relaciones y fuentes visibles cuando hay un caso cargado.'
+      : 'For now I can summarize visible entities, relationships and sources when a case is loaded.';
+  }
+
+  if (caseData.fromApi) {
+    if (lc.includes('fuente') || lc.includes('source')) {
+      return lang === 'es'
+        ? `Esta red tiene ${caseData.sources.length} fuentes registradas. Las fuentes disponibles aparecen en el panel derecho y en la tabla de relaciones cuando vienen asociadas a un vinculo.`
+        : `This network has ${caseData.sources.length} registered sources. Available sources are shown in the right panel and in the relations table when linked to an edge.`;
+    }
+    if (lc.includes('riesgo') || lc.includes('risk') || lc.includes('conflict') || lc.includes('interés') || lc.includes('interes')) {
+      const high = caseData.flags.filter(f => f.severity === 'high');
+      if (high.length) {
+        const title = typeof high[0].title === 'string' ? high[0].title : high[0].title?.[lang] || high[0].title?.es;
+        const evidence = typeof high[0].evidence === 'string' ? high[0].evidence : high[0].evidence?.[lang] || high[0].evidence?.es;
+        return lang === 'es'
+          ? `La principal señal registrada es "${title}". ${evidence}`
+          : `The main registered signal is "${title}". ${evidence}`;
+      }
+      return lang === 'es'
+        ? `No veo banderas fuertes registradas para ${root.name}. El grafo muestra ${caseData.edges.length} relaciones documentadas que conviene revisar con sus fuentes.`
+        : `I do not see high-severity flags registered for ${root.name}. The graph shows ${caseData.edges.length} documented relationships that should be reviewed with their sources.`;
+    }
+    return lang === 'es'
+      ? `Vista centrada en ${root.name}: ${caseData.nodes.length} entidades, ${caseData.edges.length} relaciones y ${caseData.sources.length} fuentes. Esta respuesta es deterministica; la IA avanzada queda para una fase posterior.`
+      : `View centered on ${root.name}: ${caseData.nodes.length} entities, ${caseData.edges.length} relationships and ${caseData.sources.length} sources. This answer is deterministic; advanced AI is planned for a later phase.`;
+  }
 
   if (lc.includes('conflict') || lc.includes('interés') || lc.includes('interes')) {
     const high = caseData.flags.filter(f => f.severity === 'high');
