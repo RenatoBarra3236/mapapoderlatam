@@ -31,7 +31,9 @@ export default function ChatbotDrawer({ caseData, lang }) {
     }, 900 + Math.random() * 600);
   };
 
-  const root = caseData.nodes.find(n => n.id === caseData.rootId);
+  const root = caseData.nodes.find(n => n.id === caseData.rootId) || caseData.nodes[0];
+  if (!root) return null;
+
   const shortName = root.name.split(' ').slice(0, 2).join(' ');
 
   return (

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { SEARCH_INDEX } from '../../lib/demoData';
 import { searchEntities } from '../../lib/api';
 
 export default function SearchBar({ t, lang, onPick }) {
@@ -7,6 +6,8 @@ export default function SearchBar({ t, lang, onPick }) {
   const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
   const [apiResults, setApiResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [usedFallback, setUsedFallback] = useState(false);
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -27,10 +28,25 @@ export default function SearchBar({ t, lang, onPick }) {
     async function runSearch() {
       if (!debounced) {
         setApiResults([]);
+        setSearching(false);
+        setUsedFallback(false);
         return;
       }
-      const results = await searchEntities(debounced, { limit: 8 });
-      if (!cancelled) setApiResults(results);
+      setSearching(true);
+      try {
+        const results = await searchEntities(debounced, { limit: 8 });
+        if (!cancelled) {
+          setApiResults(results);
+          setUsedFallback(results.length > 0 && results.every(r => r.fromDemo));
+        }
+      } catch {
+        if (!cancelled) {
+          setApiResults([]);
+          setUsedFallback(false);
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
     }
     runSearch();
     return () => { cancelled = true; };
@@ -38,11 +54,7 @@ export default function SearchBar({ t, lang, onPick }) {
 
   const results = useMemo(() => {
     if (!debounced) return [];
-    if (apiResults.length > 0) return apiResults;
-    return SEARCH_INDEX.filter(r =>
-      r.name.toLowerCase().includes(debounced) ||
-      r.subtitle.toLowerCase().includes(debounced)
-    ).slice(0, 8);
+    return apiResults;
   }, [apiResults, debounced]);
 
   const showDropdown = open && (query.length > 0);
@@ -78,17 +90,24 @@ export default function SearchBar({ t, lang, onPick }) {
 
       {showDropdown && (
         <div className="search-dropdown">
-          {results.length === 0 ? (
+          {searching ? (
+            <div className="search-section-title">{lang === 'es' ? 'Buscando…' : 'Searching…'}</div>
+          ) : results.length === 0 ? (
             <div className="search-section-title">{t.noResults}</div>
           ) : (
             <>
-              <div className="search-section-title">{t.suggested}</div>
+              <div className="search-section-title">
+                {usedFallback ? (lang === 'es' ? 'Coincidencias demo' : 'Demo matches') : t.suggested}
+              </div>
               {results.map((r, i) => (
                 <button key={i} className="search-result" onClick={() => pick(r)}>
                   <span className={`type-dot ${r.type}`} />
                   <span>
                     <div className="name">{r.name}</div>
-                    <div className="sub">{r.subtitle}</div>
+                    <div className="sub">
+                      {r.subtitle}
+                      {r.fromDemo && ` · ${lang === 'es' ? 'demo' : 'demo'}`}
+                    </div>
                   </span>
                   <span className={`${riskPillClass(r.risk)} risk-pill`}>{r.risk}</span>
                 </button>

@@ -1,6 +1,10 @@
 import React from 'react';
 
 export default function AISummary({ caseData, lang, t }) {
+  const summary = typeof caseData.summary === 'string'
+    ? caseData.summary
+    : caseData.summary?.[lang] || caseData.summary?.es || caseData.summary?.en || '';
+
   return (
     <div className="section">
       <div className="section-title">{t.aiSummary}</div>
@@ -9,7 +13,7 @@ export default function AISummary({ caseData, lang, t }) {
           <span className="pulse-dot" />
           {lang === 'es' ? 'Análisis generado' : 'Generated analysis'}
         </div>
-        <div className="ai-summary-body">{caseData.summary[lang]}</div>
+        <div className="ai-summary-body">{summary}</div>
       </div>
     </div>
   );

@@ -69,18 +69,41 @@ El worker duerme fuera de la ventana nocturna `22:00-07:00`, cuenta requests por
 
 InfoLobby se carga desde CSV locales en `backend/data/infolobby`. Los archivos oficiales exportados están codificados como UTF-16 y se procesan en streaming para evitar cargar millones de filas en memoria.
 
-TUI general de seedeo:
+TUI general de seedeo en Rust:
 
 ```bash
-python -m scripts.seed_data_tui
+cd tui-rs
+cargo run
 ```
 
 Atajos principales:
 
 - `c`: activa el worker de ChileCompra en segundo plano.
 - `i`: carga InfoLobby desde CSV locales.
+- `o`: carga Offshore Leaks desde CSV locales.
 - `r`: refresca contadores.
 - `q`: sale.
+
+Las cargas InfoLobby y Offshore se ejecutan dentro del TUI Rust: parsean CSV con el crate `csv`, reemiten `COPY FORMAT text` con tabuladores y actualizan progreso desde el hilo de carga. InfoLobby usa chunks de 64 MiB por defecto; se puede ajustar:
+
+```bash
+cd tui-rs
+cargo run -- --infolobby-copy-chunk-mb 128
+```
+
+También se puede ejecutar la misma carga Rust sin interfaz interactiva, útil para pruebas de paridad:
+
+```bash
+cd tui-rs
+cargo run -- --run-infolobby --infolobby-data-dir ../data/infolobby
+cargo run -- --run-offshore --offshore-data-dir ../data/offshore
+```
+
+El TUI Python anterior sigue disponible como fallback:
+
+```bash
+python -m scripts.seed_data_tui
+```
 
 Prueba acotada:
 

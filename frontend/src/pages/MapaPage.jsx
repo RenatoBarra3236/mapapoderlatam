@@ -11,8 +11,7 @@ import ChatbotDrawer from '../components/chatbot/ChatbotDrawer';
 import TweaksPanel from '../components/tweaks/TweaksPanel';
 import { applyPalette } from '../components/tweaks/palettes';
 import { I18N } from '../lib/i18n';
-import { DEMO_CASES } from '../lib/demoData';
-import { getEntityGraph } from '../lib/api';
+import { getDemoCase, getEntityGraph, healthCheck } from '../lib/api';
 
 const STORAGE_KEY = 'mapapoder.tweaks';
 
@@ -29,8 +28,11 @@ export default function MapaPage() {
   const [theme, setTheme] = useState(saved.theme || 'light');
   const [palette, setPalette] = useState(saved.palette || 'editorial');
   const [density, setDensity] = useState(saved.density || 'regular');
-  const [caseId, setCaseId] = useState(null);
-  const [apiCaseData, setApiCaseData] = useState(null);
+  const [activeCase, setActiveCase] = useState(null);
+  const [loadingGraph, setLoadingGraph] = useState(false);
+  const [graphError, setGraphError] = useState(null);
+  const [backendState, setBackendState] = useState('checking');
+  const [notice, setNotice] = useState(null);
   const [view, setView] = useState('neural');
   const [tweaksOpen, setTweaksOpen] = useState(false);
 
@@ -47,27 +49,75 @@ export default function MapaPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ lang, theme, palette, density }));
   }, [lang, theme, palette, density]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function checkBackend() {
+      try {
+        const result = await healthCheck();
+        if (cancelled) return;
+        const demoMode = result?.demo || result?.status === 'disabled';
+        setBackendState(demoMode ? 'demo' : 'live');
+        setNotice(demoMode ? I18N[lang].backendUnavailable : null);
+      } catch {
+        if (!cancelled) {
+          setBackendState('demo');
+          setNotice(I18N[lang].backendUnavailable);
+        }
+      }
+    }
+    checkBackend();
+    return () => { cancelled = true; };
+  }, []);
+
   const t = I18N[lang];
-  const caseData = apiCaseData || (caseId ? DEMO_CASES[caseId] : null);
+  const caseData = activeCase;
 
   async function pickCase(selection) {
     const selected = typeof selection === 'object' ? selection : { id: selection };
-    setApiCaseData(null);
-    if (selected.fromApi || selected.entityId) {
-      try {
-        const graph = await getEntityGraph(selected.entityId || selected.id, 2);
-        setCaseId(null);
-        setApiCaseData(graph);
-        return;
-      } catch {
-        setApiCaseData(null);
+    if (selected.fromDemo || selected.caseId) {
+      const demo = getDemoCase(selected.caseId || selected.id);
+      if (demo) {
+        setActiveCase(demo);
+        setGraphError(null);
+        setNotice(t.usingDemo);
       }
+      return;
     }
-    setCaseId(selected.id);
+
+    const entityId = selected.entityId || selected.id;
+    if (!entityId) return;
+
+    setGraphError(null);
+    setNotice(t.loadingGraph);
+    setLoadingGraph(true);
+    try {
+      const graph = await getEntityGraph(entityId, { depth: 2 });
+      if (!graph.nodes.length) {
+        throw new Error('Graph has no nodes');
+      }
+      setActiveCase(graph);
+      setNotice(graph.fromDemo ? t.usingDemo : t.usingBackend);
+    } catch (error) {
+      setGraphError(lang === 'es'
+        ? `No se pudo cargar el grafo desde la API. ${error.message || ''}`.trim()
+        : `Could not load the graph from the API. ${error.message || ''}`.trim());
+      setNotice(lang === 'es'
+        ? 'No se pudo cargar el grafo. Puedes seguir usando los casos demo.'
+        : 'Could not load the graph. Demo cases remain available.');
+    } finally {
+      setLoadingGraph(false);
+    }
   }
+
+  const emptyStatus = graphError || (backendState === 'demo' ? t.backendUnavailable : null);
 
   return (
     <div className="app">
+      {notice && (
+        <div className={`data-notice ${backendState === 'demo' || caseData?.fromDemo ? 'demo' : 'api'}`}>
+          {notice}
+        </div>
+      )}
       <Topbar
         lang={lang}
         setLang={setLang}
@@ -79,17 +129,25 @@ export default function MapaPage() {
       />
       <main className={`main ${caseData ? '' : 'empty-mode'}`}>
         <div className="canvas-col">
-          {caseData ? (
+          {loadingGraph && !caseData ? (
+            <EmptyState
+              t={t}
+              lang={lang}
+              onPick={pickCase}
+              status={t.loadingGraph}
+              hideSuggestions
+            />
+          ) : caseData ? (
             <>
               <CanvasTabs view={view} setView={setView} lang={lang} caseData={caseData} />
-              {view === 'neural' && <NeuralView caseData={caseData} lang={lang} />}
-              {view === 'orbit' && <OrbitView caseData={caseData} lang={lang} />}
-              {view === 'timeline' && <TimelineView caseData={caseData} />}
+              {view === 'neural' && <NeuralView caseData={caseData} lang={lang} onNodeClick={caseData.fromDemo ? undefined : pickCase} />}
+              {view === 'orbit' && <OrbitView caseData={caseData} lang={lang} onNodeClick={caseData.fromDemo ? undefined : pickCase} />}
+              {view === 'timeline' && <TimelineView caseData={caseData} lang={lang} />}
               {view === 'table' && <TableView caseData={caseData} lang={lang} />}
               <ChatbotDrawer caseData={caseData} lang={lang} />
             </>
           ) : (
-            <EmptyState t={t} lang={lang} onPick={pickCase} />
+            <EmptyState t={t} lang={lang} onPick={pickCase} status={emptyStatus} />
           )}
         </div>
         {caseData && <RightPanel caseData={caseData} lang={lang} t={t} />}

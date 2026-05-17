@@ -7,12 +7,8 @@ Helper de desarrollo. En producción usa Alembic:
 
 from config.database import Base, engine
 from models import Entity, EntityIdentifier, IngestionRun, RawRecord, Relationship, RiskFlag, Source
-from scripts.seed_dev import seed
-
-
 def init_db():
     Base.metadata.create_all(bind=engine)
-    seed()
     print("Base de desarrollo inicializada. Para producción usa: alembic upgrade head")
 
 

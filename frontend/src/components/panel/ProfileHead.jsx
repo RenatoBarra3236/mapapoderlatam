@@ -11,15 +11,18 @@ function RiskBadge({ value, t }) {
 }
 
 export default function ProfileHead({ caseData, lang, t }) {
-  const root = caseData.nodes.find(n => n.id === caseData.rootId);
+  const root = caseData.nodes.find(n => n.id === caseData.rootId) || caseData.nodes[0];
+  if (!root) return null;
+
   const connections = caseData.edges.filter(e => e.s === caseData.rootId || e.t === caseData.rootId).length;
   const flaggedRel = caseData.edges.filter(e => e.flag).length;
+  const typeLabel = root.typeLabel?.[lang] || t.nodeTypes[root.rawType] || t.nodeTypes[root.type] || root.type;
 
   return (
     <div className="profile-head">
       <div className="profile-eyebrow">
         <span className={`type-dot ${root.type}`} />
-        {t.nodeTypes[root.type]} · {root.country}
+        {typeLabel} · {root.country}
       </div>
       <h2 className="profile-name">{root.name}</h2>
       {root.subtitle && <div className="profile-sub">{root.subtitle}</div>}

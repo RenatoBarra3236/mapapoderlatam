@@ -5,6 +5,7 @@ export default function TableView({ caseData, lang }) {
   const t = I18N[lang];
   const labels = RELATION_LABELS[lang];
   const nodeById = Object.fromEntries(caseData.nodes.map(n => [n.id, n]));
+  const edges = caseData.edges.filter(e => nodeById[e.s] && nodeById[e.t]);
 
   return (
     <div className="table-view">
@@ -19,7 +20,7 @@ export default function TableView({ caseData, lang }) {
           </tr>
         </thead>
         <tbody>
-          {caseData.edges.map((e, i) => {
+          {edges.map((e, i) => {
             const s = nodeById[e.s];
             const tgt = nodeById[e.t];
             return (

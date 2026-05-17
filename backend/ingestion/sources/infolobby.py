@@ -302,6 +302,26 @@ def _read_csv_records(path: Path) -> Iterable[RawRecordInput]:
             )
 
 
+def count_selected_rows(data_dir: str | Path | None = None, files: Any = None, progress_callback=None) -> int:
+    base_dir = Path(data_dir or DEFAULT_DATA_DIR)
+    total = 0
+    for file_name in _selected_files(files):
+        path = base_dir / file_name
+        if not path.exists():
+            raise FileNotFoundError(f"No existe CSV InfoLobby: {path}")
+        with path.open("r", encoding="utf-16", newline="") as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            file_rows = 0
+            for file_rows, _ in enumerate(reader, start=1):
+                if progress_callback and file_rows % 5000 == 0:
+                    progress_callback({"file": file_name, "file_rows": file_rows, "total_rows": total + file_rows})
+            total += file_rows
+            if progress_callback:
+                progress_callback({"file": file_name, "file_rows": file_rows, "total_rows": total})
+    return max(0, total)
+
+
 def _external_id(file_name: str, row: dict[str, str], row_number: int) -> str:
     candidates_by_file = {
         "audiencias.csv": ("CodigoURI",),

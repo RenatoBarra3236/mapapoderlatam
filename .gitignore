@@ -4,6 +4,7 @@ venv/
 .uv-cache/
 .env
 dist/
+backend/tui-rs/target/
 *.log
 .DS_Store
 .claude/settings.json
