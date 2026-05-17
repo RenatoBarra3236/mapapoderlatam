@@ -169,8 +169,8 @@ export default function NeuralView({ caseData, lang, onNodeClick }) {
             const glowR = isRoot ? 80 : (n.risk >= 50 ? 36 : 26);
             const color = typeColor(n);
 
-            const name = truncate(n.name, 22);
-            const sub = n.subtitle ? truncate(n.subtitle, 26) : null;
+            const name = truncate(n.name, 28);
+            const sub = n.subtitle ? truncate(n.subtitle, 30) : null;
             const labelOff = baseR + 14;
 
             return (

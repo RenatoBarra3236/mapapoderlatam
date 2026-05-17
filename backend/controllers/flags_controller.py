@@ -60,7 +60,7 @@ def _rule_revolving_door(case, nodes):
                     contract = nodes[awarded_target]
                     amount = (contract.get("meta") or {}).get("amount", "—")
                     out.append({
-                        "id": "rule-revolving",
+                        "id": f"rule-revolving-{root_id}-{entity_id}-{own['t']}-{awarded_target}",
                         "severity": "high",
                         "title": {
                             "es": "Puerta giratoria",
@@ -195,7 +195,7 @@ def _rule_channeled_donation(case, nodes):
                         company = nodes[c]
                         middleman = nodes[middleman_id]
                         out.append({
-                            "id": f"rule-channeled-{relative_id}",
+                            "id": f"rule-channeled-{relative_id}-{c}-{middleman_id}-{final}",
                             "severity": "high",
                             "title": {
                                 "es": "Donación canalizada por entidad vinculada",
@@ -236,7 +236,7 @@ def _rule_vote_without_recusal(case, nodes):
                 relative = nodes[relative_id]
                 vote_node = nodes[vote["t"]]
                 out.append({
-                    "id": f"rule-vote-{vote['t']}-{relative_id}",
+                    "id": f"rule-vote-{vote['t']}-{relative_id}-{comp['id']}",
                     "severity": "high",
                     "title": {
                         "es": "Voto sin abstención",
