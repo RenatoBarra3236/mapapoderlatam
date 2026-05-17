@@ -42,7 +42,7 @@ async def get_subgraph(db: Session, node_id: int, depth: int = 2):
     )
     SELECT DISTINCT
         n.id, n.external_id, n.type, n.name, n.country,
-        n.metadata, n.risk_score, n.created_at,
+        n.meta, n.risk_score, n.created_at,
         CASE WHEN n.id = :node_id THEN 1 ELSE 0 END as is_root
     FROM nodes n
     WHERE n.id IN (
@@ -135,8 +135,8 @@ async def get_node_stats(db: Session, node_id: int):
     ).all()
 
     total_amount = sum(
-        float(c.metadata.get("amount", 0)) for c in contracts
-        if c.metadata and isinstance(c.metadata, dict)
+        float(c.meta.get("amount", 0)) for c in contracts
+        if c.meta and isinstance(c.meta, dict)
     )
 
     return {

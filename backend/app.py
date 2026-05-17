@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from routes import graph, search
+from routes import graph, search, ai, flags
 from config.settings import get_settings
 
 load_dotenv()
@@ -32,6 +32,8 @@ async def health_check():
 # Rutas
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
+app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
+app.include_router(flags.router, prefix="/api/flags", tags=["flags"])
 
 if __name__ == "__main__":
     import uvicorn

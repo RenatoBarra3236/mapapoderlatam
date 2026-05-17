@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { I18N, SUGGESTED_QUESTIONS } from '../../lib/i18n';
 import { fakeAnswer } from './fakeAnswer';
+import { postChat } from '../../services/api';
 
 export default function ChatbotDrawer({ caseData, lang }) {
   const [expanded, setExpanded] = useState(false);
@@ -18,17 +19,30 @@ export default function ChatbotDrawer({ caseData, lang }) {
   const t = I18N[lang];
   const sugg = SUGGESTED_QUESTIONS[lang];
 
-  const send = (text) => {
+  const send = async (text) => {
     const v = text.trim();
     if (!v) return;
+    const prior = messages;
     setMessages(m => [...m, { role: 'user', text: v }]);
     setInput('');
     setTyping(true);
     if (!expanded) setExpanded(true);
-    setTimeout(() => {
-      setMessages(m => [...m, { role: 'ai', text: fakeAnswer(v, caseData, lang) }]);
+
+    try {
+      const { answer } = await postChat(caseData.id, {
+        question: v,
+        lang,
+        history: prior.slice(-6)
+      });
+      setMessages(m => [...m, { role: 'ai', text: answer }]);
+    } catch (err) {
+      setMessages(m => [...m, {
+        role: 'ai',
+        text: fakeAnswer(v, caseData, lang) + (lang === 'es' ? ' · (modo offline)' : ' · (offline mode)')
+      }]);
+    } finally {
       setTyping(false);
-    }, 900 + Math.random() * 600);
+    }
   };
 
   const root = caseData.nodes.find(n => n.id === caseData.rootId);
