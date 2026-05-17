@@ -2,18 +2,17 @@ import { useState, useRef, useEffect } from 'react';
 import { useSearch } from '../../hooks/useSearch';
 
 const TYPE_LABELS = {
-  person:   { label: 'Persona',  color: 'bg-purple-900 text-purple-200' },
-  company:  { label: 'Empresa',  color: 'bg-teal-900 text-teal-200' },
-  contract: { label: 'Contrato', color: 'bg-orange-900 text-orange-200' },
+  person: { label: 'Persona', emoji: '👤' },
+  company: { label: 'Empresa', emoji: '🏢' },
+  contract: { label: 'Contrato', emoji: '📋' },
 };
 
-export default function SearchBar({ onSelect }) {
-  const [query,    setQuery]    = useState('');
-  const [open,     setOpen]     = useState(false);
-  const { results, loading }    = useSearch(query);
-  const wrapperRef              = useRef(null);
+export default function SearchBar({ onSelect, language = 'es' }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const { results, loading } = useSearch(query);
+  const wrapperRef = useRef(null);
 
-  // Cerrar dropdown al hacer clic afuera
   useEffect(() => {
     const handler = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
@@ -31,43 +30,83 @@ export default function SearchBar({ onSelect }) {
   };
 
   return (
-    <div ref={wrapperRef} className="relative w-full">
-      <div className="relative">
+    <div ref={wrapperRef} style={{ position: 'relative', width: '100%' }}>
+      <div style={{ position: 'relative' }}>
         <input
           type="text"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-          onFocus={() => results.length > 0 && setOpen(true)}
-          placeholder="Busca un funcionario, empresa o contrato..."
-          className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-purple-500"
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          placeholder="Buscar persona, empresa, RUT o contrato..."
+          style={{
+            width: '100%',
+            padding: '10px 16px',
+            fontSize: '14px',
+            border: `1px solid var(--border)`,
+            borderRadius: '24px',
+            backgroundColor: 'var(--bg)',
+            color: 'var(--ink)',
+            outline: 'none',
+          }}
+          onFocus={(e) => {
+            if (results.length > 0) setOpen(true);
+            e.target.style.borderColor = 'var(--c-person)';
+          }}
+          onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
         />
         {loading && (
-          <span className="absolute right-3 top-2.5 text-xs text-gray-500">Buscando…</span>
+          <span style={{ position: 'absolute', right: '16px', top: '10px', fontSize: '12px', opacity: 0.5 }}>
+            🔍
+          </span>
         )}
       </div>
 
       {open && results.length > 0 && (
-        <ul className="absolute z-50 mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg overflow-hidden shadow-xl">
+        <ul
+          style={{
+            position: 'absolute',
+            zIndex: 50,
+            marginTop: '8px',
+            width: '100%',
+            backgroundColor: 'var(--bg)',
+            border: `1px solid var(--border)`,
+            borderRadius: '8px',
+            overflow: 'hidden',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          }}
+        >
+          <li style={{ padding: '8px 16px', fontSize: '11px', opacity: 0.5, fontWeight: '600' }}>
+            CASOS SUGERIDOS
+          </li>
           {results.map((node) => {
             const t = TYPE_LABELS[node.type] || TYPE_LABELS.person;
             return (
               <li
-                key={node.id}
+                key={`${node.caseId}-${node.id}`}
                 onClick={() => handleSelect(node)}
-                className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-800 cursor-pointer"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '12px 16px',
+                  cursor: 'pointer',
+                  borderBottom: `1px solid var(--border)`,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--border)')}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${t.color}`}>
-                  {t.label}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-100 truncate">{node.name}</p>
-                  {node.metadata?.role && (
-                    <p className="text-xs text-gray-500 truncate">{node.metadata.role}</p>
+                <span style={{ fontSize: '14px' }}>{t.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '13px', fontWeight: '500' }}>{node.name}</p>
+                  {node.subtitle && (
+                    <p style={{ fontSize: '11px', opacity: 0.6 }}>{node.subtitle}</p>
                   )}
                 </div>
-                {node.risk_score > 0 && (
-                  <span className="text-xs text-gray-500 shrink-0">
-                    {node.risk_score} conexiones
+                {node.risk && (
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--c-alert)' }}>
+                    {node.risk}
                   </span>
                 )}
               </li>

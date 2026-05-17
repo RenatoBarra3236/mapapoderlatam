@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import api from '../services/api';
 
 export function useSearch(query, delay = 300) {
-  const [results,  setResults]  = useState([]);
-  const [loading,  setLoading]  = useState(false);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -13,11 +12,41 @@ export function useSearch(query, delay = 300) {
     }
 
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
+    debounceRef.current = setTimeout(() => {
       setLoading(true);
       try {
-        const { data } = await api.get('/search', { params: { q: query, limit: 8 } });
-        setResults(data.results);
+        // Buscar en los datos mockeados (window.DEMO_CASES)
+        if (!window.DEMO_CASES) {
+          setResults([]);
+          return;
+        }
+
+        const searchResults = [];
+        const queryLower = query.toLowerCase();
+
+        // Iterar sobre todos los casos
+        Object.values(window.DEMO_CASES).forEach((caseData) => {
+          // Buscar en nodos
+          if (caseData.nodes) {
+            caseData.nodes.forEach((node) => {
+              if (
+                node.name.toLowerCase().includes(queryLower) ||
+                (node.subtitle && node.subtitle.toLowerCase().includes(queryLower))
+              ) {
+                // Evitar duplicados
+                if (!searchResults.find((r) => r.id === node.id)) {
+                  searchResults.push({
+                    ...node,
+                    caseId: caseData.id,
+                  });
+                }
+              }
+            });
+          }
+        });
+
+        // Limitar a 8 resultados
+        setResults(searchResults.slice(0, 8));
       } catch (err) {
         console.error('Error en búsqueda:', err);
         setResults([]);

@@ -1,6 +1,6 @@
-/* Mapa de Poder â Editorial minimal aesthetic */
+/* Mapa de Poder — Editorial minimal aesthetic */
 
-/* Tokens â override via tweaks */
+/* Tokens — override via tweaks */
 :root {
   --bg: #FAF8F3;
   --bg-2: #F1EEE6;
@@ -850,7 +850,7 @@ input { font-family: inherit; }
   font-size: 14px;
 }
 .msg.ai.typing { color: var(--ink-3); }
-.msg.ai.typing::after { content: "â"; animation: blink 1s steps(2) infinite; }
+.msg.ai.typing::after { content: "▍"; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
 .suggested-row {
