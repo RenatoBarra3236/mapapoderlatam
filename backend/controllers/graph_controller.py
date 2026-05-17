@@ -56,6 +56,57 @@ def risk_flag_to_api(flag: RiskFlag) -> dict:
     }
 
 
+def derived_risk_flags(entities: list[Entity], relationships: list[Relationship], existing: list[RiskFlag]) -> list[dict]:
+    existing_entity_ids = {flag.entity_id for flag in existing if flag.entity_id}
+    existing_relationship_ids = {flag.relationship_id for flag in existing if flag.relationship_id}
+    out = []
+
+    for entity in sorted(entities, key=lambda item: item.risk_score or 0, reverse=True):
+        if len(out) >= 8:
+            break
+        if entity.id in existing_entity_ids:
+            continue
+        risk = entity.risk_score or 0
+        if risk < 40:
+            continue
+        severity = "high" if risk >= 65 else "medium"
+        out.append({
+            "id": f"derived-entity-{entity.id}",
+            "severity": severity,
+            "type": "derived_risk_score",
+            "title": {"es": "Score de riesgo elevado", "en": "Elevated risk score"},
+            "evidence": {
+                "es": f"{entity.display_name} registra score {risk}. Es una señal derivada de los datos cargados y requiere revisión de fuentes.",
+                "en": f"{entity.display_name} has risk score {risk}. This is derived from loaded data and requires source review.",
+            },
+            "source": {"label": "Indicador derivado", "url": "#"},
+            "metadata": {"derived": True, "entity_id": entity.id, "risk_score": risk},
+        })
+
+    for relationship in relationships:
+        if len(out) >= 10:
+            break
+        if relationship.id in existing_relationship_ids:
+            continue
+        confidence = float(relationship.confidence_score or 1)
+        if confidence >= 0.55:
+            continue
+        out.append({
+            "id": f"derived-relationship-{relationship.id}",
+            "severity": "medium",
+            "type": "low_confidence_relationship",
+            "title": {"es": "Relación con baja confianza", "en": "Low-confidence relationship"},
+            "evidence": {
+                "es": f"Relación {relationship.relationship_type} con confianza {confidence:.2f}. Debe validarse contra la fuente antes de inferir conclusiones.",
+                "en": f"Relationship {relationship.relationship_type} has confidence {confidence:.2f}. Validate against the source before drawing conclusions.",
+            },
+            "source": {"label": "Indicador derivado", "url": "#"},
+            "metadata": {"derived": True, "relationship_id": relationship.id, "confidence_score": confidence},
+        })
+
+    return out
+
+
 async def get_subgraph(db: Session, node_id: int, depth: int = 2):
     depth = max(1, min(depth, 3))
     center = db.get(Entity, node_id)
@@ -100,12 +151,15 @@ async def get_subgraph(db: Session, node_id: int, depth: int = 2):
     source_ids.update(flag.evidence_source_id for flag in flags if flag.evidence_source_id)
     sources = db.query(Source).filter(Source.id.in_(source_ids)).all() if source_ids else []
 
+    persisted_flags = [risk_flag_to_api(flag) for flag in flags]
+    derived_flags = derived_risk_flags(entities, relationships, flags)
+
     return {
         "center": str(center.id),
         "rootId": str(center.id),
         "nodes": [entity_to_node(entity, center.id) for entity in entities],
         "edges": [relationship_to_edge(relationship, flagged_relationship_ids) for relationship in relationships],
-        "flags": [risk_flag_to_api(flag) for flag in flags],
+        "flags": persisted_flags + derived_flags,
         "timeline": [],
         "sources": [
             {

@@ -1,11 +1,11 @@
-import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from routes import cases, chat, entities, graph, search, summary
 from config.settings import get_settings
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 settings = get_settings()
 

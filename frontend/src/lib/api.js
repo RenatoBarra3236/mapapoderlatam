@@ -202,9 +202,9 @@ function buildChatContext(caseData, lang) {
   };
 }
 
-export async function getAISummary(entityId, lang = 'es') {
+export async function getAISummary(entityId, lang = 'es', options = {}) {
   return request(`/summary/${entityId}`, { 
-    params: { lang },
+    params: { lang, refresh: options.refresh || undefined },
     timeout: 45000 
   });
 }

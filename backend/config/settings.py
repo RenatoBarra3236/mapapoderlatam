@@ -1,5 +1,8 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 class Settings(BaseSettings):
     PORT: int = 3001
@@ -19,6 +22,8 @@ class Settings(BaseSettings):
     REGISTRO_COLABORADORES_URL: str = ""
     ANTHROPIC_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
+    GEMINI_TIMEOUT_MS: int = 45000
     AI_PROVIDER: str = "claude"  # "claude" | "gemini"
 
     @property
@@ -26,7 +31,7 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.BACKEND_CORS_ORIGINS.split(",") if origin.strip()]
 
     class Config:
-        env_file = ".env"
+        env_file = BACKEND_DIR / ".env"
 
 @lru_cache()
 def get_settings():

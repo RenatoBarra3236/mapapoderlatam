@@ -21,7 +21,11 @@ def get_provider(settings) -> "AIProvider":
         if not settings.GEMINI_API_KEY:
             raise ValueError("AI_PROVIDER=gemini pero GEMINI_API_KEY no está configurado")
         from ai.gemini_provider import GeminiProvider
-        return GeminiProvider(settings.GEMINI_API_KEY)
+        return GeminiProvider(
+            settings.GEMINI_API_KEY,
+            model=settings.GEMINI_MODEL,
+            timeout_ms=settings.GEMINI_TIMEOUT_MS,
+        )
 
     # Default: Claude
     if not settings.ANTHROPIC_API_KEY:

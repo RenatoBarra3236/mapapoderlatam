@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ai.provider import get_provider
@@ -12,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/{entity_id}")
-async def get_summary(entity_id: int, lang: str = "es", db: Session = Depends(get_db)):
+async def get_summary(entity_id: int, lang: str = "es", refresh: bool = False, db: Session = Depends(get_db)):
     if lang not in ("es", "en"):
         lang = "es"
 
@@ -21,7 +22,7 @@ async def get_summary(entity_id: int, lang: str = "es", db: Session = Depends(ge
         .filter(AISummaryCache.entity_id == entity_id, AISummaryCache.lang == lang)
         .first()
     )
-    if cached:
+    if cached and not refresh:
         return {
             "entity_id": entity_id,
             "lang": lang,
@@ -54,14 +55,21 @@ async def get_summary(entity_id: int, lang: str = "es", db: Session = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI generation failed: {e}")
 
-    record = AISummaryCache(
-        entity_id=entity_id,
-        lang=lang,
-        summary_text=summary_text,
-        provider=provider.name,
-        model=provider.model,
-    )
-    db.add(record)
+    if cached:
+        cached.summary_text = summary_text
+        cached.provider = provider.name
+        cached.model = provider.model
+        cached.generated_at = func.now()
+        record = cached
+    else:
+        record = AISummaryCache(
+            entity_id=entity_id,
+            lang=lang,
+            summary_text=summary_text,
+            provider=provider.name,
+            model=provider.model,
+        )
+        db.add(record)
     db.commit()
 
     return {

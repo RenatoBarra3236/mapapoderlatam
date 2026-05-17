@@ -102,8 +102,44 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Command {
     FastDemo(FastDemoArgs),
+    HackathonLoad(HackathonLoadArgs),
     IngestChilecompra(ChileSelectiveArgs),
     DbDiagnoseDuplicates(DbDiagnoseArgs),
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum HackathonProfile {
+    Smoke,
+    Demo,
+    Rich,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+struct HackathonLoadArgs {
+    #[arg(long, value_enum, default_value_t = HackathonProfile::Demo)]
+    profile: HackathonProfile,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    skip_chile: bool,
+    #[arg(long)]
+    skip_infolobby: bool,
+    #[arg(long)]
+    skip_offshore: bool,
+    #[arg(long)]
+    focus: Option<String>,
+    #[arg(long)]
+    from: Option<String>,
+    #[arg(long)]
+    to: Option<String>,
+    #[arg(long)]
+    chile_limit: Option<u64>,
+    #[arg(long)]
+    infolobby_limit: Option<u64>,
+    #[arg(long)]
+    offshore_limit: Option<u64>,
+    #[arg(long, default_value = "CHL")]
+    offshore_country_code: Vec<String>,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -349,6 +385,9 @@ fn main() -> Result<()> {
     if let Some(command) = args.command.as_ref() {
         match command {
             Command::FastDemo(fast_args) => run_fast_demo(db_url.clone(), &backend_dir, fast_args)?,
+            Command::HackathonLoad(load_args) => {
+                run_hackathon_load(db_url.clone(), &backend_dir, load_args)?
+            }
             Command::IngestChilecompra(chile_args) => {
                 run_chilecompra_selective_cli(db_url.clone(), &backend_dir, chile_args)?
             }
@@ -413,6 +452,8 @@ fn main() -> Result<()> {
     println!("Mapa Poder Latam data CLI");
     println!();
     println!("Comandos principales:");
+    println!("  cargo run -- hackathon-load --profile demo");
+    println!("  cargo run -- hackathon-load --profile smoke --dry-run");
     println!("  cargo run -- ingest-chilecompra --fast-demo --limit 50");
     println!("  cargo run -- ingest-chilecompra --fast-demo --dry-run");
     println!("  cargo run -- db-diagnose-duplicates");
@@ -1242,6 +1283,99 @@ fn parse_fast_sources(value: &str) -> Result<Vec<FastSource>> {
         anyhow::bail!("--sources debe incluir infolobby, offshore o ambos");
     }
     Ok(out)
+}
+
+fn run_hackathon_load(db_url: String, backend_dir: &Path, args: &HackathonLoadArgs) -> Result<()> {
+    let (default_infolobby, default_offshore, default_chile, default_requests) = match args.profile
+    {
+        HackathonProfile::Smoke => (30, 50, 10, 8),
+        HackathonProfile::Demo => (200, 500, 30, 20),
+        HackathonProfile::Rich => (500, 2_000, 60, 40),
+    };
+    let infolobby_limit = args.infolobby_limit.unwrap_or(default_infolobby);
+    let offshore_limit = args.offshore_limit.unwrap_or(default_offshore);
+    let chile_limit = args.chile_limit.unwrap_or(default_chile);
+
+    println!("Hackathon load: {:?}", args.profile);
+    println!(
+        "Plan: infolobby={} offshore={} chile={} dry_run={}",
+        if args.skip_infolobby {
+            0
+        } else {
+            infolobby_limit
+        },
+        if args.skip_offshore {
+            0
+        } else {
+            offshore_limit
+        },
+        if args.skip_chile { 0 } else { chile_limit },
+        args.dry_run
+    );
+
+    let mut sources = Vec::new();
+    if !args.skip_infolobby {
+        sources.push("infolobby");
+    }
+    if !args.skip_offshore {
+        sources.push("offshore");
+    }
+    if !sources.is_empty() {
+        run_fast_demo(
+            db_url.clone(),
+            backend_dir,
+            &FastDemoArgs {
+                sources: sources.join(","),
+                infolobby_dir: None,
+                offshore_dir: None,
+                limit_audiences: infolobby_limit,
+                drop_oldest_percent: 70,
+                focus: args.focus.clone(),
+                audience_ids: None,
+                offshore_limit,
+                offshore_country_code: args.offshore_country_code.clone(),
+                dry_run: args.dry_run,
+                skip_raw: true,
+                raw_mode: RawMode::Minimal,
+            },
+        )?;
+    }
+
+    if args.skip_chile {
+        return Ok(());
+    }
+    if env::var("CHILECOMPRA_TICKET")
+        .ok()
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        eprintln!("ChileCompra skipped: CHILECOMPRA_TICKET no configurado.");
+        return Ok(());
+    }
+    run_chilecompra_selective_cli(
+        db_url,
+        backend_dir,
+        &ChileSelectiveArgs {
+            from: args.from.clone(),
+            to: args.to.clone(),
+            buyer: None,
+            keyword: args.focus.clone(),
+            supplier_rut: None,
+            supplier_name: None,
+            fast_demo: true,
+            dry_run: args.dry_run,
+            limit: chile_limit,
+            max_requests: default_requests,
+            delay_ms: 500,
+            retry: 2,
+            backoff_ms: 1_500,
+            cache: true,
+            no_cache: false,
+            cache_dir: ".cache/chilecompra".to_string(),
+            skip_raw: true,
+            raw_mode: RawMode::Minimal,
+        },
+    )
 }
 
 fn run_fast_demo(db_url: String, backend_dir: &Path, args: &FastDemoArgs) -> Result<()> {
@@ -3292,7 +3426,17 @@ fn run_offshore_rust(opts: OffshoreOptions, tx: Sender<Msg>) -> Result<OffshoreR
                 serde_json::json!({"phase":"cleanup","stage":"cleanup"}),
             )?;
         }
-        let (tables, copied) = copy_offshore_csvs(&mut client, &opts.data_dir, &tx)?;
+        let (tables, copied) = if opts.limit.is_some() {
+            copy_offshore_csvs_selective(
+                &mut client,
+                &opts.data_dir,
+                &opts.country_codes,
+                opts.limit,
+                &tx,
+            )?
+        } else {
+            copy_offshore_csvs(&mut client, &opts.data_dir, &tx)?
+        };
         let stats = normalize_offshore_sql(
             &mut client,
             &tables,
@@ -3470,6 +3614,220 @@ fn copy_offshore_csvs(
         )?;
     }
     Ok((tables, total))
+}
+
+fn copy_offshore_csvs_selective(
+    client: &mut Client,
+    data_dir: &Path,
+    country_codes: &[String],
+    limit: Option<u64>,
+    tx: &Sender<Msg>,
+) -> Result<(HashMap<String, String>, u64)> {
+    let run_token = uuid::Uuid::new_v4().to_string().replace('-', "_");
+    let mut tables = HashMap::new();
+    for (file_name, headers) in offshore_headers() {
+        let table = format!(
+            "tmp_offshore_{}_{}",
+            Path::new(file_name)
+                .file_stem()
+                .and_then(|v| v.to_str())
+                .unwrap_or("csv")
+                .replace('-', "_"),
+            run_token
+        );
+        let cols = headers
+            .iter()
+            .map(|h| format!("\"{}\" text", h.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        client.batch_execute(&format!("CREATE TEMP TABLE {table} (_seq bigint, {cols})"))?;
+        tables.insert(file_name.to_string(), table);
+    }
+
+    let seed_nodes = collect_offshore_seed_nodes(data_dir, country_codes)?;
+    let rel_headers = headers_for_offshore("relationships.csv");
+    let relationships = select_offshore_relationship_rows(
+        &data_dir.join("relationships.csv"),
+        &rel_headers,
+        &seed_nodes,
+        limit.unwrap_or(1_000),
+    )?;
+    let mut selected_nodes = HashSet::new();
+    for (_, row) in &relationships {
+        selected_nodes.insert(csv_value(&rel_headers, row, "node_id_start").to_string());
+        selected_nodes.insert(csv_value(&rel_headers, row, "node_id_end").to_string());
+    }
+
+    let rel_table = tables.get("relationships.csv").unwrap();
+    let mut total = copy_selected_utf8_csv_text(
+        client,
+        rel_table,
+        &rel_headers,
+        relationships.iter().map(|(seq, row)| (*seq, row)),
+    )?;
+    client.batch_execute(&format!(
+        "CREATE INDEX ON {rel_table} (node_id_start); CREATE INDEX ON {rel_table} (node_id_end)"
+    ))?;
+    emit_offshore(
+        tx,
+        serde_json::json!({"phase":"copy selected rows","stage":"copy selected rows","file":"relationships.csv","file_rows":relationships.len(),"records_fetched":total,"records_processed":total,"total_rows":total}),
+    )?;
+
+    for (file_name, headers) in offshore_headers()
+        .into_iter()
+        .filter(|(file_name, _)| *file_name != "relationships.csv")
+    {
+        let table = tables.get(file_name).unwrap();
+        let copied = copy_offshore_node_subset(
+            client,
+            &data_dir.join(file_name),
+            table,
+            &headers,
+            &selected_nodes,
+        )?;
+        total += copied;
+        client.batch_execute(&format!("CREATE INDEX ON {table} (node_id)"))?;
+        emit_offshore(
+            tx,
+            serde_json::json!({"phase":"copy selected rows","stage":"copy selected rows","file":file_name,"file_rows":copied,"records_fetched":total,"records_processed":total,"total_rows":total}),
+        )?;
+    }
+    Ok((tables, total))
+}
+
+fn headers_for_offshore(file_name: &str) -> Vec<&'static str> {
+    offshore_headers()
+        .into_iter()
+        .find(|(name, _)| *name == file_name)
+        .map(|(_, headers)| headers)
+        .unwrap_or_default()
+}
+
+fn collect_offshore_seed_nodes(
+    data_dir: &Path,
+    country_codes: &[String],
+) -> Result<HashSet<String>> {
+    let wanted = country_codes
+        .iter()
+        .map(|v| v.trim().to_uppercase())
+        .filter(|v| !v.is_empty())
+        .collect::<HashSet<_>>();
+    let mut seed_nodes = HashSet::new();
+    for (file_name, headers) in offshore_headers()
+        .into_iter()
+        .filter(|(file_name, _)| *file_name != "relationships.csv")
+    {
+        let path = data_dir.join(file_name);
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true)
+            .from_path(&path)?;
+        validate_infolobby_headers(&mut rdr, &path, &headers)?;
+        for row in rdr.records() {
+            let row = row?;
+            let node_id = csv_value(&headers, &row, "node_id");
+            if node_id.is_empty() {
+                continue;
+            }
+            if offshore_country_matches(csv_value(&headers, &row, "country_codes"), &wanted) {
+                seed_nodes.insert(node_id.to_string());
+            }
+        }
+    }
+    Ok(seed_nodes)
+}
+
+fn select_offshore_relationship_rows(
+    path: &Path,
+    headers: &[&str],
+    seed_nodes: &HashSet<String>,
+    limit: u64,
+) -> Result<Vec<(u64, csv::StringRecord)>> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(path)?;
+    validate_infolobby_headers(&mut rdr, path, headers)?;
+    let mut selected = Vec::new();
+    for (idx, row) in rdr.records().enumerate() {
+        if selected.len() as u64 >= limit {
+            break;
+        }
+        let row = row?;
+        let start = csv_value(headers, &row, "node_id_start");
+        let end = csv_value(headers, &row, "node_id_end");
+        if seed_nodes.contains(start) || seed_nodes.contains(end) {
+            selected.push((idx as u64 + 1, row));
+        }
+    }
+    Ok(selected)
+}
+
+fn copy_offshore_node_subset(
+    client: &mut Client,
+    path: &Path,
+    table: &str,
+    headers: &[&str],
+    selected_nodes: &HashSet<String>,
+) -> Result<u64> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(path)?;
+    validate_infolobby_headers(&mut rdr, path, headers)?;
+    let mut rows = Vec::new();
+    for (idx, row) in rdr.records().enumerate() {
+        let row = row?;
+        if selected_nodes.contains(csv_value(headers, &row, "node_id")) {
+            rows.push((idx as u64 + 1, row));
+        }
+    }
+    copy_selected_utf8_csv_text(
+        client,
+        table,
+        headers,
+        rows.iter().map(|(seq, row)| (*seq, row)),
+    )
+}
+
+fn copy_selected_utf8_csv_text<'a, I>(
+    client: &mut Client,
+    table: &str,
+    headers: &[&str],
+    rows: I,
+) -> Result<u64>
+where
+    I: IntoIterator<Item = (u64, &'a csv::StringRecord)>,
+{
+    let copy_sql = format!(
+        "COPY {table} (_seq, {}) FROM STDIN WITH (FORMAT text, DELIMITER E'\\t', NULL '\\N')",
+        headers
+            .iter()
+            .map(|h| format!("\"{}\"", h.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut writer = client.copy_in(&copy_sql)?;
+    let mut copied = 0;
+    for (seq, row) in rows {
+        let mut line = seq.to_string();
+        for idx in 0..headers.len() {
+            line.push('\t');
+            line.push_str(&copy_text_cell(row.get(idx).unwrap_or("")));
+        }
+        line.push('\n');
+        writer.write_all(line.as_bytes())?;
+        copied += 1;
+    }
+    writer.finish()?;
+    Ok(copied)
+}
+
+fn offshore_country_matches(value: &str, wanted: &HashSet<String>) -> bool {
+    value
+        .split([',', ';', '|'])
+        .map(|v| v.trim().to_uppercase())
+        .any(|code| !code.is_empty() && wanted.contains(&code))
 }
 
 fn copy_utf8_csv_text(
@@ -3679,7 +4037,7 @@ fn insert_offshore_graph(
             SELECT 'offshore:node:' || n.node_id AS stable_key, n.* FROM tmp_offshore_nodes n JOIN tmp_offshore_selected_nodes s ON s.node_id = n.node_id
         ), inserted AS (
             INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
-            SELECT 'offshore','public_dataset',$1,stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','node','node_id',node_id,'node_kind',node_kind,'sourceID',NULLIF(source_id_raw,''),'country_codes',NULLIF(country_codes,''),'countries',NULLIF(countries,''),'run_id',$3))
+            SELECT 'offshore','public_dataset',$1,stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','node','node_id',node_id,'node_kind',node_kind,'sourceID',NULLIF(source_id_raw,''),'country_codes',NULLIF(country_codes,''),'countries',NULLIF(countries,''),'run_id',$3::text))
             FROM node_rows RETURNING id, external_id
         )
         INSERT INTO tmp_offshore_source_map SELECT 'node', external_id, id FROM inserted;"#,
@@ -3690,7 +4048,7 @@ fn insert_offshore_graph(
             SELECT 'offshore:relationship:' || node_id_start || ':' || node_id_end || ':' || rel_type || ':' || seq::text AS stable_key, * FROM tmp_offshore_selected_relationships
         ), inserted AS (
             INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
-            SELECT 'offshore','public_dataset',$1,stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','relationship','row_number',seq+1,'node_id_start',node_id_start,'node_id_end',node_id_end,'rel_type',rel_type,'link',NULLIF(link,''),'status',NULLIF(status,''),'start_date',NULLIF(start_date,''),'end_date',NULLIF(end_date,''),'sourceID',NULLIF(source_id_raw,''),'run_id',$3))
+            SELECT 'offshore','public_dataset',$1,stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','relationship','row_number',seq+1,'node_id_start',node_id_start,'node_id_end',node_id_end,'rel_type',rel_type,'link',NULLIF(link,''),'status',NULLIF(status,''),'start_date',NULLIF(start_date,''),'end_date',NULLIF(end_date,''),'sourceID',NULLIF(source_id_raw,''),'run_id',$3::text))
             FROM rel_rows RETURNING id, external_id
         )
         INSERT INTO tmp_offshore_source_map SELECT 'relationship', external_id, id FROM inserted;"#,
@@ -3734,7 +4092,7 @@ fn insert_offshore_graph_idempotent(client: &mut Client, run_token: &str) -> Res
             ORDER BY s.external_id, s.id
         ), missing AS (
             INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
-            SELECT 'offshore','public_dataset',$1,n.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','node','node_id',node_id,'node_kind',node_kind,'sourceID',NULLIF(source_id_raw,''),'country_codes',NULLIF(country_codes,''),'countries',NULLIF(countries,''),'run_id',$3))
+            SELECT 'offshore','public_dataset',$1,n.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','node','node_id',node_id,'node_kind',node_kind,'sourceID',NULLIF(source_id_raw,''),'country_codes',NULLIF(country_codes,''),'countries',NULLIF(countries,''),'run_id',$3::text))
             FROM node_rows n
             WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.external_id = n.stable_key)
             RETURNING id, external_id
@@ -3757,7 +4115,7 @@ fn insert_offshore_graph_idempotent(client: &mut Client, run_token: &str) -> Res
             ORDER BY s.external_id, s.id
         ), missing AS (
             INSERT INTO sources (source_name, source_type, source_url, external_id, license, metadata)
-            SELECT 'offshore','public_dataset',$1,r.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','relationship','row_number',seq+1,'node_id_start',node_id_start,'node_id_end',node_id_end,'rel_type',rel_type,'link',NULLIF(link,''),'status',NULLIF(status,''),'start_date',NULLIF(start_date,''),'end_date',NULLIF(end_date,''),'sourceID',NULLIF(source_id_raw,''),'run_id',$3))
+            SELECT 'offshore','public_dataset',$1,r.stable_key,$2,jsonb_strip_nulls(jsonb_build_object('record_type','relationship','row_number',seq+1,'node_id_start',node_id_start,'node_id_end',node_id_end,'rel_type',rel_type,'link',NULLIF(link,''),'status',NULLIF(status,''),'start_date',NULLIF(start_date,''),'end_date',NULLIF(end_date,''),'sourceID',NULLIF(source_id_raw,''),'run_id',$3::text))
             FROM rel_rows r
             WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.external_id = r.stable_key)
             RETURNING id, external_id

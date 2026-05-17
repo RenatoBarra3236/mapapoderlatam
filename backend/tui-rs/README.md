@@ -31,6 +31,32 @@ Cache local: `.cache/chilecompra`. Cada archivo JSON guarda `request_url`, `para
 
 La ingesta primero lista pocos registros por fecha y luego descarga detalle solo de los seleccionados. En `fast-demo` prioriza registros con comprador, proveedor, monto, fecha y codigo.
 
+## Hackathon Load
+
+Orquestador recomendado para demo. Usa cargas pequenas, idempotentes y evita raw records pesados por defecto.
+
+```bash
+cargo run --release -- hackathon-load --profile smoke --dry-run
+cargo run --release -- hackathon-load --profile smoke
+cargo run --release -- hackathon-load --profile demo
+```
+
+Perfiles:
+
+- `smoke`: valida rapido la tuberia completa.
+- `demo`: dataset chico pero presentable.
+- `rich`: mas volumen si queda tiempo.
+
+Flags utiles:
+
+```bash
+cargo run --release -- hackathon-load --profile demo --focus "municipalidad"
+cargo run --release -- hackathon-load --profile demo --skip-chile
+cargo run --release -- hackathon-load --profile demo --infolobby-limit 200 --offshore-limit 500 --chile-limit 30
+```
+
+Offshore en modo limitado escanea CSVs y solo copia a PostgreSQL las relaciones/nodos seleccionados por pais y limite. Por defecto el orquestador usa `--offshore-country-code CHL`.
+
 ## CSV Rapido Selectivo
 
 ```bash

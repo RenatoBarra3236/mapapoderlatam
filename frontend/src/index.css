@@ -786,6 +786,25 @@ a.table-source-link:hover { color: var(--ink); border-color: var(--ink-3); }
   color: var(--ink-3); letter-spacing: 0.08em; text-transform: uppercase;
   margin-bottom: 8px;
 }
+.ai-refresh {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1;
+}
+.ai-refresh:hover { background: var(--bg-2); color: var(--ink); }
+.ai-error {
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-warn);
+}
 .ai-eyebrow .pulse-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--c-contract);
