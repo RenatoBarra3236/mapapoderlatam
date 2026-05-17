@@ -42,7 +42,7 @@ async def search(
                 "type": r.type,
                 "name": r.name,
                 "country": r.country,
-                "metadata": r.metadata or {},
+                "metadata": r.meta or {},
                 "risk_score": r.risk_score,
                 "created_at": r.created_at.isoformat() if r.created_at else None
             }

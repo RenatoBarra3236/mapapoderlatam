@@ -15,7 +15,7 @@ class Edge(Base):
     source_url = Column(String(500), nullable=True)
     valid_from = Column(Date, nullable=True)
     valid_to = Column(Date, nullable=True)
-    metadata = Column(JSON, default={})
+    meta = Column("metadata", JSON, default={})
     created_at = Column(DateTime, default=datetime.utcnow)
 
     source = relationship("Node", foreign_keys=[source_id], back_populates="edges_out")

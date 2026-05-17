@@ -1,6 +1,6 @@
 export const I18N = {
   es: {
-    appName: "Mapa de Poder",
+    appName: "RedPoder",
     tagline: "Conexiones entre poder político, empresas y contratos públicos en LATAM",
     searchPlaceholder: "Buscar persona, empresa, RUT o contrato…",
     suggested: "Casos sugeridos",
@@ -31,7 +31,7 @@ export const I18N = {
     nodeTypes: { person: "Persona", company: "Empresa", contract: "Contrato" }
   },
   en: {
-    appName: "Power Map",
+    appName: "RedPoder",
     tagline: "Connections between political power, companies and public contracts in LATAM",
     searchPlaceholder: "Search person, company, ID or contract…",
     suggested: "Featured cases",

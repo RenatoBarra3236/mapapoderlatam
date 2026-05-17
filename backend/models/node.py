@@ -11,7 +11,7 @@ class Node(Base):
     type = Column(String(50), nullable=False)
     name = Column(String(255), nullable=False)
     country = Column(String(10), default="CL")
-    metadata = Column(JSON, default={})
+    meta = Column("metadata", JSON, default={})
     risk_score = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
