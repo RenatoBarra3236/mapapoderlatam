@@ -19,13 +19,13 @@ docker compose -f docker-compose.dev.yml up -d postgres
 
 # 2. Backend
 cd backend
-UV_CACHE_DIR=../.uv-cache uv python pin 3.12
-UV_CACHE_DIR=../.uv-cache uv venv --clear venv --python 3.12
-UV_CACHE_DIR=../.uv-cache uv pip install -r requirements.txt --python venv/bin/python
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-venv/bin/alembic upgrade head
-venv/bin/python -m scripts.seed_dev
-venv/bin/python -m uvicorn app:app --reload --port 3001
+alembic upgrade head
+python -m scripts.seed_dev
+python -m uvicorn app:app --reload --port 3001
 
 # 3. Frontend
 cd ../frontend
@@ -59,20 +59,25 @@ ChileCompra está implementado como primer conector. Para API real configura:
 
 ```env
 CHILECOMPRA_TICKET=
+CHILECOMPRA_SEED_TENDER_CODES=2424-12-LP24
+CHILECOMPRA_SEED_OC_CODES=2424-77-SE24
 ```
 
 Y ejecuta:
 
 ```bash
 cd backend
-venv/bin/python -m scripts.ingest chilecompra --codigo 2424-12-LP24
+python -m scripts.seed_chilecompra
 ```
 
-Sin ticket, el conector falla con un mensaje explícito. Para fixture de desarrollo:
+También puedes ingestar códigos puntuales:
 
 ```bash
-venv/bin/python -m scripts.ingest chilecompra --fixture
+python -m scripts.ingest chilecompra --kind licitaciones --codigo 2424-12-LP24
+python -m scripts.ingest chilecompra --kind ordenes_compra --codigo 2424-77-SE24
 ```
+
+Sin ticket, el conector falla con un mensaje explícito. Los fixtures se usan solo con `--fixture` para desarrollo local.
 
 InfoLobby, InfoProbidad, Registro de Colaboradores y SERVEL están preparados como conectores con pendientes concretos de endpoint/dataset oficial.
 

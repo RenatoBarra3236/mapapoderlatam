@@ -36,7 +36,7 @@ alembic upgrade head
 Seed de desarrollo:
 
 ```bash
-venv/bin/python -m scripts.seed_dev
+python -m scripts.seed_dev
 ```
 
 Endpoints:

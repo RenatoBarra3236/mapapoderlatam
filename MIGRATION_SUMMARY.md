@@ -20,13 +20,13 @@ El backend fue actualizado desde FastAPI + SQLAlchemy + PyMySQL con tablas `node
 ```bash
 docker compose -f docker-compose.dev.yml up -d postgres
 cd backend
-UV_CACHE_DIR=../.uv-cache uv python pin 3.12
-UV_CACHE_DIR=../.uv-cache uv venv --clear venv --python 3.12
-UV_CACHE_DIR=../.uv-cache uv pip install -r requirements.txt --python venv/bin/python
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-venv/bin/alembic upgrade head
-venv/bin/python -m scripts.seed_dev
-venv/bin/python -m uvicorn app:app --reload --port 3001
+alembic upgrade head
+python -m scripts.seed_dev
+python -m uvicorn app:app --reload --port 3001
 ```
 
 ## Ingesta

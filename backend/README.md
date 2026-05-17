@@ -20,18 +20,35 @@ Usa `JSONB` para metadata flexible y `pg_trgm` para búsqueda por similitud.
 
 ```bash
 docker compose -f ../docker-compose.dev.yml up -d postgres
-UV_CACHE_DIR=../.uv-cache uv python pin 3.12
-UV_CACHE_DIR=../.uv-cache uv venv --clear venv --python 3.12
-UV_CACHE_DIR=../.uv-cache uv pip install -r requirements.txt --python venv/bin/python
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-venv/bin/alembic upgrade head
-venv/bin/python -m scripts.seed_dev
-venv/bin/python -m uvicorn app:app --reload --port 3001
+alembic upgrade head
+python -m scripts.seed_dev
+python -m uvicorn app:app --reload --port 3001
 ```
 
-## Ingesta
+## Ingesta ChileCompra
 
-ChileCompra está implementado como conector inicial. Requiere `CHILECOMPRA_TICKET` para API real.
+ChileCompra está implementado para los endpoints documentados en `third-party/docs`:
+
+- `licitaciones.json?codigo=[Numero de la licitacion]&ticket=[Ticket de Acceso]`
+- `OrdenCompra.json?codigo=[Codigo orden de Compra]&ticket=[Ticket de Acceso]`
+
+Seed real:
+
+```bash
+CHILECOMPRA_TICKET=... CHILECOMPRA_SEED_TENDER_CODES=2424-12-LP24 python -m scripts.seed_chilecompra
+CHILECOMPRA_TICKET=... CHILECOMPRA_SEED_OC_CODES=2424-77-SE24 python -m scripts.seed_chilecompra
+```
+
+Ingesta puntual:
+
+```bash
+python -m scripts.ingest chilecompra --kind licitaciones --codigo 2424-12-LP24
+python -m scripts.ingest chilecompra --kind ordenes_compra --codigo 2424-77-SE24
+```
 
 Los conectores de InfoLobby, InfoProbidad, Registro de Colaboradores y SERVEL quedan preparados con errores explícitos hasta definir endpoints/datasets oficiales.
 
