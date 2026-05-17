@@ -45,5 +45,5 @@ export function useStage(initialZoom = 0.92) {
 
   const reset = () => { setZoom(initialZoom); setPan({ x: 0, y: 0 }); };
 
-  return { stageRef, dims, zoom, setZoom, pan, isDragging, handlers, reset };
+  return { stageRef, dims, zoom, setZoom, pan, setPan, isDragging, handlers, reset };
 }

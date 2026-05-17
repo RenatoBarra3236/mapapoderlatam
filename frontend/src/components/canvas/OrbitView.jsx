@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { radialTreeLayout } from '../../lib/layouts/radialTree';
 import { useStage } from '../../lib/graph/useStage';
 import { typeColor, truncate, shortEdgeLabel } from '../../lib/graph/utils';
@@ -11,21 +11,35 @@ const SECTOR_PALETTE = [
 ];
 
 export default function OrbitView({ caseData, lang, onNodeClick }) {
-  const { stageRef, dims, zoom, setZoom, pan, isDragging, handlers, reset } = useStage();
+  const { stageRef, dims, zoom, setZoom, pan, setPan, isDragging, handlers, reset } = useStage();
   const [hoveredId, setHoveredId] = useState(null);
-
-  useEffect(() => { reset(); setHoveredId(null); }, [caseData.id]);
 
   const { ringRadius, layout } = useMemo(() => {
     const probe = radialTreeLayout(caseData, 150);
     const maxD = Math.max(1, probe.maxDepth);
-    const padding = 50;
-    const available = Math.max(180, Math.min(dims.w, dims.h) / 2 - padding);
-    // Aim for generous spacing between rings — leaves room for node labels
-    // and the sector pill to coexist without crowding.
-    const rr = Math.max(155, Math.min(230, available / maxD));
+    const padding = 40;
+    const available = Math.max(200, Math.min(dims.w, dims.h) / 2 - padding);
+    // Pack rings tighter for deep trees, looser for shallow ones.
+    // The (+ 0.5) reserves arc-space for the outermost node labels.
+    const rr = Math.max(95, Math.min(190, available / (maxD + 0.5)));
     return { ringRadius: rr, layout: radialTreeLayout(caseData, rr) };
   }, [caseData.id, dims.w, dims.h]);
+
+  // Auto-fit zoom and pan on every case change so the whole orbital fits
+  // the viewport on first paint. User can still zoom/pan freely after.
+  // The +60 buffer reserves room for the perimeter sector pills.
+  const lastFitCase = useRef(null);
+  useEffect(() => {
+    if (dims.w === 0 || dims.h === 0) return;
+    if (lastFitCase.current === caseData.id) return;
+    lastFitCase.current = caseData.id;
+    const outerR = (layout.maxDepth + 0.25) * ringRadius + 60;
+    const half = Math.min(dims.w, dims.h) / 2;
+    const fit = Math.max(0.45, Math.min(1.0, (half - 30) / outerR));
+    setZoom(fit);
+    setPan({ x: 0, y: 0 });
+    setHoveredId(null);
+  }, [caseData.id, dims.w, dims.h, layout.maxDepth, ringRadius, setZoom, setPan]);
 
   const cx = dims.w / 2 + pan.x;
   const cy = dims.h / 2 + pan.y;
@@ -73,49 +87,54 @@ export default function OrbitView({ caseData, lang, onNodeClick }) {
           {/* Sector wedges */}
           {(() => {
             const outerR = (layout.maxDepth + 0.25) * ringRadius;
-            // Sector pill sits in the empty band between the root halo and the
-            // first ring — clear of node labels regardless of how the children
-            // are placed along the wedge.
-            const sectorLabelR = ringRadius * 0.62;
+            // Place sector pills on the OUTER perimeter — beyond the last
+            // ring of nodes — where arc length is largest and labels don't
+            // collide with the root or with depth-2/3 node labels.
+            const sectorLabelR = outerR + 34;
+            // Hide pills when the sector arc is too narrow even at the
+            // outer radius to fit the pill text.
+            const PILL_MIN_ARC = Math.PI / 7.5; // ~24°
             return layout.sectorIds.map((sid, i) => {
               const b = layout.sectorBounds.get(sid);
               if (!b) return null;
               const startA = b.startAngle, endA = b.endAngle;
+              const arc = endA - startA;
               const x1 = Math.cos(startA) * outerR, y1 = Math.sin(startA) * outerR;
               const x2 = Math.cos(endA) * outerR, y2 = Math.sin(endA) * outerR;
-              const large = (endA - startA) > Math.PI ? 1 : 0;
+              const large = arc > Math.PI ? 1 : 0;
               const wedgePath = `M 0 0 L ${x1} ${y1} A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2} Z`;
               const labelMid = b.midAngle;
               const lx = Math.cos(labelMid) * sectorLabelR;
               const ly = Math.sin(labelMid) * sectorLabelR;
               const sectorNode = caseData.nodes.find(n => n.id === sid);
+              const showPill = sectorNode && arc >= PILL_MIN_ARC;
               const shortName = sectorNode
-                ? truncate(sectorNode.name.split(/[ ,]/).filter(Boolean).slice(0, 2).join(' '), 16)
+                ? truncate(sectorNode.name.split(/[ ,]/).filter(Boolean).slice(0, 2).join(' '), 12)
                 : '';
               return (
                 <g key={sid}>
-                  <path d={wedgePath} fill={SECTOR_PALETTE[i % SECTOR_PALETTE.length]} opacity="0.04" />
+                  <path d={wedgePath} fill={SECTOR_PALETTE[i % SECTOR_PALETTE.length]} opacity="0.07" />
                   <line
                     x1={0} y1={0}
                     x2={Math.cos(endA) * outerR}
                     y2={Math.sin(endA) * outerR}
-                    stroke="var(--line)" strokeWidth="1" strokeDasharray="2 5" opacity="0.4"
+                    stroke="var(--line)" strokeWidth="1" strokeDasharray="2 5" opacity="0.3"
                   />
-                  {sectorNode && (
+                  {showPill && (
                     <g>
                       <rect
-                        x={lx - shortName.length * 3.5 - 8}
-                        y={ly - 8}
-                        width={shortName.length * 7 + 24}
-                        height={16}
-                        rx={8}
+                        x={lx - shortName.length * 3.2 - 7}
+                        y={ly - 7}
+                        width={shortName.length * 6.4 + 22}
+                        height={14}
+                        rx={7}
                         fill="var(--bg)"
-                        opacity="0.75"
+                        opacity="0.85"
                       />
                       <text
                         x={lx} y={ly + 3}
                         textAnchor="middle"
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 500 }}
+                        style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 500 }}
                         fill={SECTOR_PALETTE[i % SECTOR_PALETTE.length]}
                         opacity="0.95"
                       >
@@ -163,10 +182,13 @@ export default function OrbitView({ caseData, lang, onNodeClick }) {
                 {!isInvolved && (() => {
                   const w = shortEdgeLabel(e);
                   if (!w) return null;
-                  // Bias toward the outer endpoint so labels on edges leaving
-                  // the root don't crowd the root's own name/subtitle.
-                  const lx = isTree ? sp.x * 0.38 + tp.x * 0.62 : (sp.x + tp.x) * 0.42;
-                  const ly = isTree ? sp.y * 0.38 + tp.y * 0.62 : (sp.y + tp.y) * 0.42;
+                  // Push labels of root-incident edges far from the centre so
+                  // they don't sit on top of the root's name/subtitle/halo.
+                  const isFromRoot = e.s === caseData.rootId;
+                  const isToRoot = e.t === caseData.rootId;
+                  const bias = isFromRoot ? 0.78 : isToRoot ? 0.22 : 0.5;
+                  const lx = isTree ? sp.x * (1 - bias) + tp.x * bias : (sp.x + tp.x) * 0.42;
+                  const ly = isTree ? sp.y * (1 - bias) + tp.y * bias : (sp.y + tp.y) * 0.42;
                   return (
                     <g style={{ pointerEvents: 'none' }}>
                       <rect x={lx - w.length * 3.5 - 3} y={ly - 7} width={w.length * 7 + 6} height={13} rx={3} fill="var(--bg)" opacity={isDim ? 0.4 : 0.95} />
