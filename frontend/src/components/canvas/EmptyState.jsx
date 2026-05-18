@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { DEMO_CASES } from '../../lib/demoData';
 import { I18N } from '../../lib/i18n';
+import LegalNoticeModal from '../legal/LegalNoticeModal';
 
 const CASE_DESCRIPTIONS = {
   fuentes: {
@@ -14,6 +15,18 @@ const CASE_DESCRIPTIONS = {
   losandes: {
     es: "Empresa adjudica contrato CONAF 11 días después de ser constituida.",
     en: "Company awarded CONAF contract 11 days after being incorporated."
+  },
+  salinas: {
+    es: "Ex-Director CFE asume consejo de empresa eléctrica adjudicataria de MXN 22.000M.",
+    en: "Former CFE Director joins board of firm awarded MXN 22B during his tenure."
+  },
+  espinoza: {
+    es: "Congresista vota Ley de Concesiones Viales mientras su hermano asesora a la adjudicataria.",
+    en: "Congresswoman votes on Road Concessions Act while her brother advises the awarded firm."
+  },
+  valencia: {
+    es: "Empresa fantasma adjudica COP 18.400M a MinSalud 18 días después de fundada.",
+    en: "Shell company awarded COP 18.4B by Colombia's Health Ministry 18 days after founding."
   }
 };
 
@@ -24,6 +37,7 @@ function riskTag(risk, t) {
 }
 
 export default function EmptyState({ t, lang, onPick }) {
+  const [legalOpen, setLegalOpen] = useState(false);
   const cases = Object.values(DEMO_CASES).map(c => ({
     ...c,
     root: c.nodes.find(n => n.id === c.rootId)
@@ -60,6 +74,20 @@ export default function EmptyState({ t, lang, onPick }) {
           </button>
         ))}
       </div>
+
+      <div className="empty-footer">
+        <span className="empty-footer-line">{t.poweredBy}</span>
+        <span className="empty-footer-line">
+          {lang === 'es'
+            ? 'Datos demo ficticios · 🇨🇱 Chile (Ley 20.880 + modernización · Ley 21.719 datos personales) · 🇲🇽 México · 🇵🇪 Perú · 🇨🇴 Colombia'
+            : 'Fictional demo data · 🇨🇱 Chile (Law 20.880 + modernization · Law 21.719 data protection) · 🇲🇽 Mexico · 🇵🇪 Peru · 🇨🇴 Colombia'}
+        </span>
+        <button className="empty-footer-link" onClick={() => setLegalOpen(true)}>
+          {lang === 'es' ? 'Avisos legales y privacidad' : 'Legal notices and privacy'}
+        </button>
+      </div>
+
+      <LegalNoticeModal open={legalOpen} onClose={() => setLegalOpen(false)} lang={lang} />
     </div>
   );
 }

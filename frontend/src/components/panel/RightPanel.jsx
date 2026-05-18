@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ProfileHead from './ProfileHead';
 import AISummary from './AISummary';
 import FlagCard from './FlagCard';
+import AppealModal from '../legal/AppealModal';
 import { useAISummary } from '../../hooks/useAISummary';
 import { useRuleFlags } from '../../hooks/useRuleFlags';
 
 export default function RightPanel({ caseData, lang, t }) {
   const ai = useAISummary(caseData.id, lang);
   const rules = useRuleFlags(caseData.id, lang);
+  const [appealOpen, setAppealOpen] = useState(false);
 
   // Summary: from AI. Falls back to demo if AI fails.
   const summaryText = ai.data?.summary ?? (ai.error ? caseData.summary[lang] : '');
@@ -42,6 +44,27 @@ export default function RightPanel({ caseData, lang, t }) {
           </div>
         )}
       </div>
+
+      <div className="section appeal-section">
+        <div className="section-title">
+          <span>{lang === 'es' ? 'Derechos del titular' : 'Data subject rights'}</span>
+        </div>
+        <p className="appeal-blurb">
+          {lang === 'es'
+            ? '¿Es usted la persona, empresa o representante legal mencionado en este perfil? Puede solicitar revisión humana, rectificación o cancelación bajo la normativa de protección de datos aplicable.'
+            : 'Are you the person, company, or legal representative named in this profile? You can request human review, rectification, or cancellation under the applicable data-protection law.'}
+        </p>
+        <button className="appeal-trigger" onClick={() => setAppealOpen(true)}>
+          {lang === 'es' ? 'Solicitar revisión / apelar' : 'Request review / appeal'}
+        </button>
+      </div>
+
+      <AppealModal
+        open={appealOpen}
+        onClose={() => setAppealOpen(false)}
+        caseData={caseData}
+        lang={lang}
+      />
     </aside>
   );
 }

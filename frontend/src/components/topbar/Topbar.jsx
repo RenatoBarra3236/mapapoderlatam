@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import SearchBar from './SearchBar';
+import LegalNoticeModal from '../legal/LegalNoticeModal';
 
 export default function Topbar({ lang, setLang, theme, setTheme, t, onPickCase, onOpenTweaks }) {
+  const [legalOpen, setLegalOpen] = useState(false);
   return (
     <header className="topbar">
       <div className="brand">
@@ -32,7 +34,16 @@ export default function Topbar({ lang, setLang, theme, setTheme, t, onPickCase, 
         >
           {lang === 'es' ? 'Tweaks' : 'Tweaks'}
         </button>
+        <button
+          className="tool-btn"
+          onClick={() => setLegalOpen(true)}
+          aria-label={lang === 'es' ? 'Avisos legales' : 'Legal notices'}
+          title={lang === 'es' ? 'Avisos legales y privacidad' : 'Legal notices and privacy'}
+        >
+          ⓘ
+        </button>
       </div>
+      <LegalNoticeModal open={legalOpen} onClose={() => setLegalOpen(false)} lang={lang} />
     </header>
   );
 }

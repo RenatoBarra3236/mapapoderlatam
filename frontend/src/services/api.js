@@ -14,6 +14,20 @@ export async function fetchFlags(caseId, lang) {
   return res.json();
 }
 
+export async function postAppeal(caseId, body) {
+  const res = await fetch(`${BASE}/appeals/${caseId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 export async function postChat(caseId, { question, lang, history }) {
   const res = await fetch(`${BASE}/ai/chat/${caseId}`, {
     method: 'POST',
