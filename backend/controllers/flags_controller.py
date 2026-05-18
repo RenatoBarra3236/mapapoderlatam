@@ -9,6 +9,77 @@ from datetime import date
 from data.demo_cases import get_case
 
 
+# ── Country-specific legal sources ──────────────────────────────────────────
+# Each rule's `source` field is picked per-country from this table so a Mexican
+# case doesn't get cited under Chilean law and vice versa. URLs point to the
+# canonical legal text or oversight registry where possible.
+
+LEGAL_SOURCES = {
+    "revolving_door": {
+        "CL": {"label": "Ley 20.880 — Art. 56 (Probidad) · Modernización en tramitación (BCN 1209272)",
+               "url": "https://www.bcn.cl/leychile/navegar?idNorma=1209272"},
+        "MX": {"label": "Ley General de Responsabilidades Administrativas — Art. 60",
+               "url": "https://www.diputados.gob.mx/LeyesBiblio/pdf/LGRA.pdf"},
+        "PE": {"label": "Ley 27815 — Código de Ética de la Función Pública",
+               "url": "https://www.gob.pe/institucion/servir/normas-legales/2511-27815"},
+        "CO": {"label": "Ley 1474 de 2011 — Estatuto Anticorrupción (Art. 2–4)",
+               "url": "https://www.secretariasenado.gov.co/senado/basedoc/ley_1474_2011.html"},
+    },
+    "family_conflict": {
+        "CL": {"label": "Ley 20.880 — Declaración de Intereses · Modernización en tramitación",
+               "url": "https://www.bcn.cl/leychile/navegar?idNorma=1209272"},
+        "MX": {"label": "Ley General de Responsabilidades Administrativas — Art. 58",
+               "url": "https://www.diputados.gob.mx/LeyesBiblio/pdf/LGRA.pdf"},
+        "PE": {"label": "Ley 27815 — Conflicto de Intereses (Art. 8)",
+               "url": "https://www.gob.pe/institucion/servir/normas-legales/2511-27815"},
+        "CO": {"label": "Ley 1474 de 2011 — Art. 8 (Inhabilidades)",
+               "url": "https://www.secretariasenado.gov.co/senado/basedoc/ley_1474_2011.html"},
+    },
+    "shell_company": {
+        "CL": {"label": "Registro SII + Mercado Público",
+               "url": "https://www.mercadopublico.cl/"},
+        "MX": {"label": "SAT + CompraNet",
+               "url": "https://compranet.hacienda.gob.mx/"},
+        "PE": {"label": "SUNAT + SEACE",
+               "url": "https://prodapp.seace.gob.pe/"},
+        "CO": {"label": "DIAN + SECOP II",
+               "url": "https://www.colombiacompra.gov.co/secop-ii"},
+    },
+    "channeled_donation": {
+        "CL": {"label": "Servel + CPLT",
+               "url": "https://www.servel.cl/"},
+        "MX": {"label": "INE — Reglamento Fiscalización Partidos",
+               "url": "https://www.ine.mx/"},
+        "PE": {"label": "ONPE — Ley 28094 Partidos Políticos",
+               "url": "https://www.onpe.gob.pe/"},
+        "CO": {"label": "CNE — Ley 1475 de 2011",
+               "url": "https://www.cne.gov.co/"},
+    },
+    "vote_without_recusal": {
+        "CL": {"label": "Ley 20.880 — Art. 56 + modernización en tramitación · Reglamento Cámara",
+               "url": "https://www.bcn.cl/leychile/navegar?idNorma=1209272"},
+        "MX": {"label": "Ley Orgánica del Congreso — Art. 8 (Conflicto de Interés)",
+               "url": "https://www.diputados.gob.mx/LeyesBiblio/pdf/LOCG.pdf"},
+        "PE": {"label": "Reglamento del Congreso — Art. 92 (Abstención)",
+               "url": "https://www.congreso.gob.pe/Docs/files/reglamentocongreso.pdf"},
+        "CO": {"label": "Ley 5 de 1992 — Art. 286 (Régimen Conflicto de Interés)",
+               "url": "https://www.secretariasenado.gov.co/senado/basedoc/ley_0005_1992.html"},
+    },
+}
+
+
+def _source(rule_key: str, country: str) -> dict:
+    """Pick the legal source for a given rule + country. Falls back to Chile
+    if the country isn't mapped (mirrors the data's CL-default tilt)."""
+    by_country = LEGAL_SOURCES.get(rule_key, {})
+    return by_country.get(country) or by_country.get("CL") or {"label": "Subgrafo", "url": "#"}
+
+
+def _root_country(case: dict, nodes: dict) -> str:
+    root = nodes.get(case["rootId"])
+    return (root or {}).get("country") or "CL"
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _by_id(case):
@@ -43,6 +114,7 @@ def _rule_revolving_door(case, nodes):
     and root now `owns` C. → puerta giratoria."""
     out = []
     root_id = case["rootId"]
+    country = _root_country(case, nodes)
     former_roles = [e for e in _edges_from(case, root_id) if e["type"] == "former_role"]
     owns_now = [e for e in _edges_from(case, root_id) if e["type"] == "owns"]
 
@@ -70,10 +142,7 @@ def _rule_revolving_door(case, nodes):
                             "es": f"{root['name']} ejerció como {fr['label']} en {entity['name']}, entidad que adjudicó “{contract['name']}” ({amount}) a {company['name']}. Hoy {root['name']} figura como {own['label']} de esa misma empresa.",
                             "en": f"{root['name']} served as {fr['label']} at {entity['name']}, the entity that awarded “{contract['name']}” ({amount}) to {company['name']}. {root['name']} now holds {own['label']} in that very firm."
                         },
-                        "source": {
-                            "label": "Ley 20.880 — Art. 56 (Probidad)",
-                            "url": "https://www.bcn.cl/leychile/navegar?idNorma=1086062"
-                        }
+                        "source": _source("revolving_door", country),
                     })
     return out
 
@@ -84,6 +153,7 @@ def _rule_family_conflict(case, nodes):
     to root. → conflicto familiar."""
     out = []
     root_id = case["rootId"]
+    country = _root_country(case, nodes)
     family = [e for e in _edges_from(case, root_id) if e["type"] == "family_of"]
     family += [e for e in _edges_to(case, root_id) if e["type"] == "family_of"]
 
@@ -122,10 +192,7 @@ def _rule_family_conflict(case, nodes):
                         "es": f"{relative['name']} ({fam['label']} de {root['name']}) tiene relación “{rel_edge['label']}” con {comp['name']}, la cual está vinculada a {shared_node['name']} — entidad o contrato donde {root['name']} también tiene participación.",
                         "en": f"{relative['name']} ({fam['label']} of {root['name']}) holds “{rel_edge['label']}” in {comp['name']}, which is tied to {shared_node['name']} — an entity or contract where {root['name']} also has a stake."
                     },
-                    "source": {
-                        "label": "Ley 20.880 — Declaración de Intereses",
-                        "url": "https://www.cplt.cl/"
-                    }
+                    "source": _source("family_conflict", country),
                 })
     return out
 
@@ -134,6 +201,7 @@ def _rule_shell_company(case, nodes, window_days=180):
     """Any company node founded within `window_days` of its first awarded
     contract. → empresa fantasma."""
     out = []
+    country = _root_country(case, nodes)
     for n in case["nodes"]:
         if n["type"] != "company":
             continue
@@ -162,10 +230,7 @@ def _rule_shell_company(case, nodes, window_days=180):
                         "es": f"{n['name']} fue constituida el {founded.isoformat()} y adjudicó “{contract['name']}” ({amount}) solo {diff} días después. Sin historial operativo previo.",
                         "en": f"{n['name']} was incorporated on {founded.isoformat()} and was awarded “{contract['name']}” ({amount}) just {diff} days later. No prior operational track record."
                     },
-                    "source": {
-                        "label": "Registro SII + ChileCompra",
-                        "url": "https://www.mercadopublico.cl/"
-                    }
+                    "source": _source("shell_company", country),
                 })
     return out
 
@@ -175,6 +240,7 @@ def _rule_channeled_donation(case, nodes):
     F signed/donated_to something tied to root. → donación canalizada."""
     out = []
     root_id = case["rootId"]
+    country = _root_country(case, nodes)
     fam_edges = [e for e in _edges_from(case, root_id) + _edges_to(case, root_id) if e["type"] == "family_of"]
 
     for fam in fam_edges:
@@ -205,10 +271,7 @@ def _rule_channeled_donation(case, nodes):
                                 "es": f"{company['name']} (controlada por {relative['name']}, {fam['label']} de {root['name']}) transfirió fondos a {middleman['name']}, que a su vez canalizó aportes hacia {root['name']}.",
                                 "en": f"{company['name']} (controlled by {relative['name']}, {fam['label']} of {root['name']}) transferred funds to {middleman['name']}, which then channeled donations to {root['name']}."
                             },
-                            "source": {
-                                "label": "Servel + CPLT",
-                                "url": "https://www.servel.cl/"
-                            }
+                            "source": _source("channeled_donation", country),
                         })
     return out
 
@@ -218,6 +281,8 @@ def _rule_vote_without_recusal(case, nodes):
     (isEntity) whose name suggests it affects C's sector. → voto sin abstención."""
     out = []
     root_id = case["rootId"]
+    country = _root_country(case, nodes)
+    source = _source("vote_without_recusal", country)
     # Root's signing actions targeting entity-type nodes (votos, leyes, audiencias)
     votes = [
         e for e in _edges_from(case, root_id)
@@ -243,13 +308,10 @@ def _rule_vote_without_recusal(case, nodes):
                         "en": "Vote without recusal"
                     },
                     "evidence": {
-                        "es": f"{root['name']} participó en “{vote_node['name']}” ({vote['label']}) mientras su {fam['label']} {relative['name']} controla {comp['name']}. La Ley 20.880 exige abstenerse cuando hay conflicto directo.",
-                        "en": f"{root['name']} took part in “{vote_node['name']}” ({vote['label']}) while their {fam['label']} {relative['name']} controls {comp['name']}. Law 20.880 requires recusal in direct conflicts."
+                        "es": f"{root['name']} participó en “{vote_node['name']}” ({vote['label']}) mientras su {fam['label']} {relative['name']} controla {comp['name']}. La normativa vigente exige abstenerse cuando hay conflicto directo de interés.",
+                        "en": f"{root['name']} took part in “{vote_node['name']}” ({vote['label']}) while their {fam['label']} {relative['name']} controls {comp['name']}. Local conflict-of-interest law requires recusal in direct conflicts."
                     },
-                    "source": {
-                        "label": "Ley 20.880 — Art. 56",
-                        "url": "https://www.bcn.cl/leychile/navegar?idNorma=1086062"
-                    }
+                    "source": source,
                 })
     return out
 

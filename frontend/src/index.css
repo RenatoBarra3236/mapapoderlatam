@@ -684,6 +684,15 @@ input { font-family: inherit; }
   text-transform: uppercase;
   color: var(--ink-3);
 }
+.stat-note {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  opacity: 0.7;
+  margin-left: 4px;
+  cursor: help;
+  letter-spacing: 0.04em;
+}
 .stat-card .value {
   font-size: 22px;
   font-weight: 500;
@@ -955,6 +964,257 @@ input { font-family: inherit; }
 .suggested-case .name { font-size: 15px; font-weight: 500; line-height: 1.3; color: var(--ink); }
 .suggested-case .desc { font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 .suggested-case .risk-row { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 4px; }
+
+.empty-footer {
+  margin-top: var(--pad-5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+.empty-footer-line {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  text-align: center;
+  max-width: 700px;
+  line-height: 1.5;
+}
+.empty-footer-link {
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  cursor: pointer;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px dashed var(--line);
+  border-radius: 0;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.empty-footer-link:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* ============ LEGAL NOTICE MODAL ============ */
+.legal-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--pad-4);
+  animation: fade var(--t-med);
+}
+.legal-modal {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  max-width: 680px;
+  width: 100%;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -20px color-mix(in srgb, var(--ink) 30%, transparent);
+  animation: slideUp var(--t-med);
+}
+.legal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--pad-4) var(--pad-5);
+  border-bottom: 1px solid var(--line);
+}
+.legal-head h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.legal-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.legal-close:hover { background: var(--bg-2); color: var(--ink); }
+.legal-body {
+  padding: var(--pad-4) var(--pad-5);
+  overflow-y: auto;
+}
+.legal-section { padding: var(--pad-3) 0; border-bottom: 1px solid var(--line-2); }
+.legal-section:last-child { border-bottom: none; }
+.legal-section h3 {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.legal-section p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* ============ APPEAL MODAL (extends legal-modal) ============ */
+.appeal-modal { max-width: 580px; }
+.appeal-form { display: flex; flex-direction: column; gap: var(--pad-3); }
+.appeal-intro {
+  margin: 0 0 var(--pad-2);
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.appeal-intro em { color: var(--ink); font-style: italic; }
+.appeal-field { display: flex; flex-direction: column; gap: 4px; }
+.appeal-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.appeal-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.appeal-input:focus {
+  border-color: var(--ink-2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.appeal-textarea {
+  font-family: var(--font-serif);
+  resize: vertical;
+  min-height: 90px;
+  line-height: 1.5;
+}
+.appeal-note {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  line-height: 1.5;
+  margin: 0;
+}
+.appeal-error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-alert);
+  background: var(--c-alert-soft);
+  border: 1px solid color-mix(in srgb, var(--c-alert) 30%, transparent);
+  border-radius: var(--radius-2);
+  padding: 8px 12px;
+  margin: 0;
+}
+.appeal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--pad-2);
+  margin-top: var(--pad-3);
+}
+.appeal-cancel, .appeal-submit {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--radius-4);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+.appeal-cancel { background: var(--bg); color: var(--ink-2); }
+.appeal-cancel:hover { border-color: var(--ink-3); color: var(--ink); }
+.appeal-submit { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.appeal-submit:hover { background: var(--ink-2); border-color: var(--ink-2); }
+.appeal-submit:disabled { background: var(--bg-3); color: var(--ink-3); border-color: var(--line); cursor: not-allowed; }
+.appeal-ticket {
+  display: flex;
+  align-items: center;
+  gap: var(--pad-3);
+  margin-top: var(--pad-3);
+  padding: var(--pad-3);
+  background: var(--bg-2);
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line);
+}
+.appeal-ticket-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.appeal-ticket-id {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--ink);
+  background: transparent;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+
+/* Appeal trigger inside the right panel */
+.appeal-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  margin-top: var(--pad-3);
+}
+.appeal-trigger:hover { border-color: var(--ink-3); color: var(--ink); background: var(--surface); }
+.appeal-trigger::before {
+  content: "⚖";
+  font-size: 13px;
+  line-height: 1;
+}
+.appeal-blurb {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+.appeal-section { padding-bottom: var(--pad-5); }
 
 /* ============ SKELETONS ============ */
 .ai-skeleton { display: flex; flex-direction: column; gap: 6px; }

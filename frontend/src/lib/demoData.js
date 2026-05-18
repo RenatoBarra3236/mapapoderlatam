@@ -356,16 +356,212 @@ export const DEMO_CASES = {
       es: "Servicios Patagonia Express fue constituida en noviembre de 2023 y adjudicó por trato directo un contrato de emergencia con CONAF (CLP 7.800M) apenas 11 días después de su creación. Su representante legal mantuvo vínculo familiar con la jefa de adquisiciones que firmó la adjudicación. El controlador final ya había recibido contratos similares mediante otra empresa relacionada.",
       en: "Servicios Patagonia Express was incorporated in November 2023 and was directly awarded an emergency contract with CONAF (CLP 7.8B) just 11 days after its creation. Its legal representative was related by marriage to CONAF's procurement chief who signed the award. The ultimate controller had previously received similar contracts through a related company."
     }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // MÉXICO — Genaro Salinas Maldonado (ex-Director CFE)
+  // ═══════════════════════════════════════════════════════════════════════
+  salinas: {
+    id: "salinas",
+    rootId: 61,
+    nodes: [
+      { id: 61, type: "person", name: "Genaro Salinas Maldonado", subtitle: "Ex-Director General CFE (2018–2023)", country: "MX", risk: 76, x: 0, y: 0,
+        meta: { curp: "SAMG620304HDFLLN05", born: "1962", education: "Ing. Eléctrico, UNAM", currentRole: "Consejero — CFE Generación V (2024–)" } },
+      { id: 62, type: "company", name: "CFE Generación V S.A.", country: "MX", risk: 62, x: 0, y: 0,
+        meta: { founded: "2014", sector: "Generación eléctrica privada", revenue: "MXN 14.200M (2023)" } },
+      { id: 63, type: "contract", name: "Contrato Subestación Norte Tijuana", country: "MX", risk: 71, x: 0, y: 0,
+        meta: { amount: "MXN 8.450M", awarded: "2022-04-18", duration: "15 años" } },
+      { id: 64, type: "person", name: "Comisión Federal de Electricidad", subtitle: "Entidad licitante", country: "MX", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 65, type: "person", name: "Verónica Maldonado de Salinas", subtitle: "Cónyuge / Empresaria", country: "MX", risk: 44, x: 0, y: 0,
+        meta: { curp: "MASV660812MDFLLR07", role: "Socia 100% Energética del Pacífico" } },
+      { id: 66, type: "company", name: "Energética del Pacífico SA de CV", country: "MX", risk: 51, x: 0, y: 0,
+        meta: { founded: "2019", sector: "Servicios técnicos eléctricos" } },
+      { id: 67, type: "contract", name: "Mantenimiento Líneas Baja California", country: "MX", risk: 58, x: 0, y: 0,
+        meta: { amount: "MXN 2.100M", awarded: "2020-09-03", duration: "4 años" } },
+      { id: 68, type: "person", name: "Roberto Salinas Becerra", subtitle: "Hermano / CEO Hidroeléctrica del Bajío", country: "MX", risk: 49, x: 0, y: 0,
+        meta: { curp: "SABR580121HDFLCB02", role: "CEO + accionista 35%" } },
+      { id: 69, type: "company", name: "Hidroeléctrica del Bajío SA", country: "MX", risk: 56, x: 0, y: 0,
+        meta: { founded: "2010", sector: "Generación hidroeléctrica" } },
+      { id: 70, type: "contract", name: "Concesión Hidroeléctrica Aguamilpa", country: "MX", risk: 64, x: 0, y: 0,
+        meta: { amount: "MXN 11.800M", awarded: "2021-07-15", duration: "25 años" } },
+      { id: 71, type: "company", name: "Fundación Energía México A.C.", country: "MX", risk: 32, x: 0, y: 0,
+        meta: { sector: "ONG sectorial / lobby energético" } },
+      { id: 72, type: "contract", name: "Audiencia pública energética #1142", country: "MX", risk: 38, x: 0, y: 0,
+        meta: { date: "2021-02-20", topic: "Reforma sector eléctrico" } }
+    ],
+    edges: [
+      { s: 61, t: 64, type: "former_role", label: "Director General (2018–2023)", weight: 1 },
+      { s: 64, t: 63, type: "awarded", label: "Adjudicó subestación", weight: 1 },
+      { s: 62, t: 63, type: "awarded", label: "Adjudicataria", weight: 1, flag: true },
+      { s: 61, t: 62, type: "owns", label: "Consejero · 12% participación", weight: 0.12, flag: true },
+      { s: 61, t: 65, type: "family_of", label: "Esposo", weight: 1 },
+      { s: 65, t: 66, type: "owns", label: "Socia 100%", weight: 1 },
+      { s: 64, t: 67, type: "awarded", label: "Adjudicó contrato", weight: 1 },
+      { s: 66, t: 67, type: "awarded", label: "Adjudicataria · empresa de la esposa", weight: 1, flag: true },
+      { s: 61, t: 68, type: "family_of", label: "Hermano", weight: 1 },
+      { s: 68, t: 69, type: "owns", label: "CEO + 35%", weight: 0.35 },
+      { s: 69, t: 70, type: "awarded", label: "Adjudicataria", weight: 1 },
+      { s: 64, t: 70, type: "awarded", label: "Adjudicó · durante gestión Genaro", weight: 1, flag: true },
+      { s: 62, t: 71, type: "donated_to", label: "Aportes MXN 12M (2020–2023)", weight: 1 },
+      { s: 71, t: 62, type: "signed", label: "Campaña sectorial pro-reforma", weight: 1, flag: true },
+      { s: 62, t: 72, type: "signed", label: "Participación lobby", weight: 1 },
+      { s: 72, t: 61, type: "signed", label: "Recibió audiencia durante gestión", weight: 1, flag: true }
+    ],
+    timeline: [
+      { date: "2018-12", title: "Asume Dirección General CFE", type: "role", severity: "info" },
+      { date: "2020-09", title: "Energética del Pacífico (esposa) adjudica contrato mantenimiento", type: "contract", severity: "warn" },
+      { date: "2021-02", title: "Audiencia pública energética con CFE Generación V", type: "relation", severity: "warn" },
+      { date: "2021-07", title: "Adjudicación Concesión Hidroeléctrica Aguamilpa a empresa del hermano", type: "contract", severity: "high", note: "Durante su gestión como Director" },
+      { date: "2022-04", title: "Adjudicación Subestación Norte Tijuana a CFE Generación V", type: "contract", severity: "high", note: "MXN 8.450M" },
+      { date: "2023-08", title: "Deja Dirección General CFE", type: "role", severity: "info" },
+      { date: "2024-02", title: "Asume como Consejero de CFE Generación V", type: "role", severity: "high", note: "Puerta giratoria — 6 meses tras dejar el cargo" }
+    ],
+    flags: [],
+    summary: {
+      es: "Genaro Salinas dirigió la Comisión Federal de Electricidad entre 2018 y 2023. Durante su gestión, la CFE adjudicó contratos por más de MXN 22.000M a empresas vinculadas a su círculo familiar y sectorial. Solo 6 meses después de dejar el cargo, asumió como consejero de CFE Generación V, una de las empresas adjudicatarias.",
+      en: "Genaro Salinas led Mexico's Federal Electricity Commission from 2018 to 2023. During his tenure, CFE awarded over MXN 22 billion in contracts to companies tied to his family and sector. Only 6 months after leaving office, he joined the board of CFE Generación V, one of the awarded firms."
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERÚ — Carmen Espinoza Vargas (Congresista Comisión Transportes)
+  // ═══════════════════════════════════════════════════════════════════════
+  espinoza: {
+    id: "espinoza",
+    rootId: 81,
+    nodes: [
+      { id: 81, type: "person", name: "Carmen Espinoza Vargas", subtitle: "Congresista — Comisión de Transportes", country: "PE", risk: 71, x: 0, y: 0,
+        meta: { dni: "08234567", born: "1972", party: "Bloque Democrático", terms: "2021–presente" } },
+      { id: 82, type: "person", name: "Diego Espinoza Vargas", subtitle: "Hermano / Abogado constructor", country: "PE", risk: 53, x: 0, y: 0,
+        meta: { dni: "07654321", role: "Socio fundador Estudio Espinoza & Cía." } },
+      { id: 83, type: "company", name: "Estudio Espinoza & Cía.", country: "PE", risk: 48, x: 0, y: 0,
+        meta: { sector: "Asesoría legal · infraestructura", clients: "Constructora Andina del Sur (2020–)" } },
+      { id: 84, type: "company", name: "Constructora Andina del Sur SAC", country: "PE", risk: 67, x: 0, y: 0,
+        meta: { founded: "2016", sector: "Construcción vial", revenue: "PEN 480M (2023)" } },
+      { id: 85, type: "contract", name: "Carretera Interoceánica Sur — Tramo III", country: "PE", risk: 74, x: 0, y: 0,
+        meta: { amount: "PEN 1.420M", awarded: "2022-11-09", duration: "8 años" } },
+      { id: 86, type: "person", name: "Ministerio de Transportes y Comunicaciones", subtitle: "Entidad licitante", country: "PE", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 87, type: "contract", name: "Audiencia de lobby #2401", country: "PE", risk: 51, x: 0, y: 0,
+        meta: { date: "2023-04-18", topic: "Ley Concesiones Viales" } },
+      { id: 88, type: "contract", name: "Donación campaña 2021", country: "PE", risk: 56, x: 0, y: 0,
+        meta: { amount: "PEN 120.000", source: "Constructora Andina via terceros" } },
+      { id: 89, type: "company", name: "Ley Concesiones Viales — Voto", country: "PE", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 90, type: "company", name: "SEDAPAL", country: "PE", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 91, type: "contract", name: "Contrato Saneamiento Lima Norte", country: "PE", risk: 49, x: 0, y: 0,
+        meta: { amount: "PEN 380M", awarded: "2023-03-22" } },
+      { id: 92, type: "company", name: "Asociación Civil Pro-Carreteras", country: "PE", risk: 34, x: 0, y: 0,
+        meta: { sector: "ONG sectorial", funding: "Aportes Constructora Andina 2021–2023" } }
+    ],
+    edges: [
+      { s: 81, t: 82, type: "family_of", label: "Hermana", weight: 1 },
+      { s: 82, t: 83, type: "owns", label: "Socio fundador 60%", weight: 0.6 },
+      { s: 83, t: 84, type: "signed", label: "Asesor legal desde 2020", weight: 1, flag: true },
+      { s: 84, t: 85, type: "awarded", label: "Adjudicataria · consorcio principal", weight: 1, flag: true },
+      { s: 86, t: 85, type: "awarded", label: "Adjudicó licitación", weight: 1 },
+      { s: 84, t: 87, type: "signed", label: "Solicitó audiencia", weight: 1 },
+      { s: 87, t: 81, type: "signed", label: "Recibió audiencia (Comisión Transportes)", weight: 1, flag: true },
+      { s: 84, t: 92, type: "donated_to", label: "Aportes PEN 240.000 (2021–2023)", weight: 1, flag: true },
+      { s: 92, t: 88, type: "signed", label: "Canalizó donación de campaña", weight: 1, flag: true },
+      { s: 88, t: 81, type: "donated_to", label: "Recibió aporte PEN 120.000", weight: 1 },
+      { s: 81, t: 89, type: "signed", label: "Votó a favor (2023)", weight: 1, flag: true },
+      { s: 86, t: 91, type: "awarded", label: "Adjudicó saneamiento", weight: 1 },
+      { s: 84, t: 91, type: "awarded", label: "Adjudicataria · segundo contrato", weight: 1 },
+      { s: 83, t: 90, type: "signed", label: "Asesor legal SEDAPAL (conflicto)", weight: 1, flag: true }
+    ],
+    timeline: [
+      { date: "2020-05", title: "Estudio Espinoza (hermano) firma asesoría con Constructora Andina", type: "relation", severity: "warn" },
+      { date: "2021-07", title: "Carmen Espinoza asume curul · integra Comisión de Transportes", type: "role", severity: "info" },
+      { date: "2021-09", title: "Donación de campaña vía Asociación Pro-Carreteras: PEN 120.000", type: "contract", severity: "high" },
+      { date: "2022-11", title: "Adjudicación Carretera Interoceánica Sur Tramo III · PEN 1.420M", type: "contract", severity: "high" },
+      { date: "2023-03", title: "Constructora Andina adjudica saneamiento SEDAPAL", type: "contract", severity: "warn" },
+      { date: "2023-04", title: "Audiencia de lobby con Constructora Andina", type: "relation", severity: "warn" },
+      { date: "2023-08", title: "Votación Ley Concesiones Viales", type: "contract", severity: "high", note: "Voto a favor pese al vínculo familiar" }
+    ],
+    flags: [],
+    summary: {
+      es: "La congresista Espinoza integra la Comisión de Transportes desde 2021. Su hermano dirige el estudio jurídico asesor de Constructora Andina del Sur, adjudicataria de PEN 1.800M en contratos públicos durante su mandato. Recibió donaciones canalizadas y votó a favor de la Ley de Concesiones Viales sin abstenerse pese al conflicto directo.",
+      en: "Congresswoman Espinoza has sat on the Transport Committee since 2021. Her brother runs the law firm advising Constructora Andina del Sur, which has been awarded PEN 1.8B in public contracts during her tenure. She received laundered campaign donations and voted in favor of the Roads Concessions Act without recusing herself despite the direct conflict."
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // COLOMBIA — Servicios Atlantic SAS (empresa fantasma COVID)
+  // ═══════════════════════════════════════════════════════════════════════
+  valencia: {
+    id: "valencia",
+    rootId: 101,
+    nodes: [
+      { id: 101, type: "company", name: "Servicios Atlantic SAS", country: "CO", risk: 84, x: 0, y: 0,
+        meta: { nit: "901.234.567-8", founded: "2020-03-15", sector: "Suministros médicos / EPP" } },
+      { id: 102, type: "contract", name: "Suministro EPP MinSalud", country: "CO", risk: 79, x: 0, y: 0,
+        meta: { amount: "COP 18.400M", awarded: "2020-04-02", duration: "6 meses" } },
+      { id: 103, type: "person", name: "Andrés Valencia Restrepo", subtitle: "Representante legal", country: "CO", risk: 57, x: 0, y: 0,
+        meta: { cedula: "1.020.345.678", role: "Representante legal y socio único declarado" } },
+      { id: 104, type: "company", name: "Ministerio de Salud y Protección Social", country: "CO", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 105, type: "person", name: "Marta Restrepo Gómez", subtitle: "Subdirectora MinSalud / Prima de Andrés", country: "CO", risk: 64, x: 0, y: 0,
+        meta: { cedula: "52.345.678", role: "Subdirectora Contratación 2019–2022" } },
+      { id: 106, type: "company", name: "GrupoAtlantic Holding SAS", country: "CO", risk: 52, x: 0, y: 0,
+        meta: { sector: "Holding (4 empresas)" } },
+      { id: 107, type: "company", name: "Logística del Caribe SAS", country: "CO", risk: 48, x: 0, y: 0,
+        meta: { sector: "Logística sanitaria", relation: "GrupoAtlantic 75%" } },
+      { id: 108, type: "contract", name: "Contrato Transporte Sanitario MinSalud", country: "CO", risk: 61, x: 0, y: 0,
+        meta: { amount: "COP 6.800M", awarded: "2020-08-14" } },
+      { id: 109, type: "company", name: "Suministros Vallecaucanos SAS", country: "CO", risk: 46, x: 0, y: 0,
+        meta: { sector: "Insumos médicos", relation: "GrupoAtlantic 60%" } },
+      { id: 110, type: "company", name: "Procuraduría General de la Nación", country: "CO", risk: 0, x: 0, y: 0, isEntity: true },
+      { id: 111, type: "contract", name: "Contrato Insumos Hospitalarios Valle", country: "CO", risk: 55, x: 0, y: 0,
+        meta: { amount: "COP 4.200M", awarded: "2020-09-25" } }
+    ],
+    edges: [
+      { s: 103, t: 101, type: "owns", label: "Socio único · 100%", weight: 1 },
+      { s: 101, t: 102, type: "awarded", label: "Adjudicataria · 18 días post-constitución", weight: 1, flag: true },
+      { s: 104, t: 102, type: "awarded", label: "Adjudicó · contratación directa pandemia", weight: 1, flag: true },
+      { s: 105, t: 102, type: "signed", label: "Firmó adjudicación", weight: 1 },
+      { s: 105, t: 103, type: "family_of", label: "Prima", weight: 1, flag: true },
+      { s: 103, t: 106, type: "owns", label: "Beneficiario final", weight: 1 },
+      { s: 106, t: 107, type: "owns", label: "Controla 75%", weight: 0.75 },
+      { s: 104, t: 108, type: "awarded", label: "Adjudicó transporte sanitario", weight: 1 },
+      { s: 107, t: 108, type: "awarded", label: "Adjudicataria · vía empresa relacionada", weight: 1, flag: true },
+      { s: 106, t: 109, type: "owns", label: "Controla 60%", weight: 0.6 },
+      { s: 104, t: 111, type: "awarded", label: "Adjudicó insumos", weight: 1 },
+      { s: 109, t: 111, type: "awarded", label: "Adjudicataria · GrupoAtlantic (tercera vez)", weight: 1, flag: true },
+      { s: 110, t: 102, type: "signed", label: "No objetó adjudicación pese a observaciones", weight: 1, flag: true }
+    ],
+    timeline: [
+      { date: "2019-08", title: "Marta Restrepo asume Subdirección Contratación MinSalud", type: "role", severity: "info" },
+      { date: "2020-03-15", title: "Constitución Servicios Atlantic SAS", type: "company", severity: "info" },
+      { date: "2020-04-02", title: "Adjudicación EPP MinSalud · 18 días post-constitución", type: "contract", severity: "high", note: "Contratación directa por emergencia pandémica" },
+      { date: "2020-08", title: "Logística del Caribe (mismo grupo) adjudica transporte sanitario", type: "contract", severity: "high" },
+      { date: "2020-09", title: "Suministros Vallecaucanos (mismo grupo) adjudica insumos Valle", type: "contract", severity: "warn" },
+      { date: "2022-12", title: "Marta Restrepo deja MinSalud", type: "role", severity: "info" },
+      { date: "2023-04", title: "Reportajes vinculan a Valencia con red de adjudicaciones MinSalud", type: "relation", severity: "high" }
+    ],
+    flags: [],
+    summary: {
+      es: "Servicios Atlantic SAS fue constituida el 15 de marzo de 2020 y solo 18 días después fue adjudicataria de un contrato de COP 18.400M con MinSalud durante la emergencia COVID. Su representante legal era primo de la Subdirectora de Contratación del Ministerio que firmó la adjudicación. El holding controlador concentró tres contratos públicos con MinSalud y entidades regionales en 6 meses.",
+      en: "Servicios Atlantic SAS was incorporated on March 15, 2020, and just 18 days later was awarded a COP 18.4 billion contract with Colombia's Health Ministry during the COVID emergency. Its legal representative was the cousin of the Ministry's Procurement Subdirector who signed the award. The controlling holding bagged three public contracts with the Ministry and regional bodies within 6 months."
+    }
   }
 };
 
 export const SEARCH_INDEX = [
+  // Chile
   { id: "fuentes", name: "Carlos Fuentes Saavedra", type: "person", subtitle: "Ex-Subsecretario MOP · CL", risk: 78 },
   { id: "errazuriz", name: "María José Errázuriz Pinto", type: "person", subtitle: "Diputada · Comisión Minería · CL", risk: 64 },
   { id: "losandes", name: "Servicios Patagonia Express SpA", type: "company", subtitle: "Logística · CL · Adjudicataria CONAF", risk: 82 },
   { id: "fuentes", name: "Constructora Los Andes SpA", type: "company", subtitle: "Construcción · CL", risk: 64 },
   { id: "errazuriz", name: "MineraPacífico Holdings", type: "company", subtitle: "Minería Cobre · CL", risk: 58 },
   { id: "fuentes", name: "Concesión Ruta 68 — Tramo 4", type: "contract", subtitle: "Contrato · CLP 184.500M · 2022", risk: 71 },
-  { id: "errazuriz", name: "Cobre Andino Ltda.", type: "company", subtitle: "Minería · subsidiaria MineraPacífico", risk: 54 },
-  { id: "losandes", name: "GrupoMansilla Ltda.", type: "company", subtitle: "Holding · CL", risk: 47 }
+  // México
+  { id: "salinas", name: "Genaro Salinas Maldonado", type: "person", subtitle: "Ex-Director CFE · MX", risk: 76 },
+  { id: "salinas", name: "CFE Generación V S.A.", type: "company", subtitle: "Generación eléctrica · MX", risk: 62 },
+  { id: "salinas", name: "Hidroeléctrica del Bajío SA", type: "company", subtitle: "Hidroeléctrica · MX", risk: 56 },
+  // Perú
+  { id: "espinoza", name: "Carmen Espinoza Vargas", type: "person", subtitle: "Congresista Comisión Transportes · PE", risk: 71 },
+  { id: "espinoza", name: "Constructora Andina del Sur SAC", type: "company", subtitle: "Construcción vial · PE", risk: 67 },
+  { id: "espinoza", name: "Carretera Interoceánica Sur — Tramo III", type: "contract", subtitle: "PEN 1.420M · 2022", risk: 74 },
+  // Colombia
+  { id: "valencia", name: "Servicios Atlantic SAS", type: "company", subtitle: "Suministros médicos · CO · Empresa fantasma", risk: 84 },
+  { id: "valencia", name: "Andrés Valencia Restrepo", type: "person", subtitle: "Representante legal · CO", risk: 57 },
+  { id: "valencia", name: "GrupoAtlantic Holding SAS", type: "company", subtitle: "Holding · CO", risk: 52 }
 ];
