@@ -23,7 +23,7 @@ def seed_database():
         type="person",
         name="Carlos Fuentes Muñoz",
         country="CL",
-        metadata={"title": "Ex Subsecretario"},
+        meta={"title": "Ex Subsecretario"},
         risk_score=85
     )
     ana = Node(
@@ -31,7 +31,7 @@ def seed_database():
         type="person",
         name="Ana María Rojas Vidal",
         country="CL",
-        metadata={"title": "Concejala"},
+        meta={"title": "Concejala"},
         risk_score=60
     )
     roberto = Node(
@@ -39,7 +39,7 @@ def seed_database():
         type="person",
         name="Roberto Fuentes Tapia",
         country="CL",
-        metadata={"title": "Empresario"},
+        meta={"title": "Empresario"},
         risk_score=70
     )
     marcela = Node(
@@ -47,7 +47,7 @@ def seed_database():
         type="person",
         name="Marcela Soto Herrera",
         country="CL",
-        metadata={"title": "Directora Transparencia"},
+        meta={"title": "Directora Transparencia"},
         risk_score=45
     )
 
@@ -60,7 +60,7 @@ def seed_database():
         type="company",
         name="Constructora Los Andes SpA",
         country="CL",
-        metadata={"sector": "Construcción"},
+        meta={"sector": "Construcción"},
         risk_score=75
     )
     servicios = Node(
@@ -68,7 +68,7 @@ def seed_database():
         type="company",
         name="Servicios Digitales Fuentes SA",
         country="CL",
-        metadata={"sector": "Tecnología"},
+        meta={"sector": "Tecnología"},
         risk_score=80
     )
     consultora = Node(
@@ -76,7 +76,7 @@ def seed_database():
         type="company",
         name="Consultora Gestión Pública Ltda",
         country="CL",
-        metadata={"sector": "Consultoría"},
+        meta={"sector": "Consultoría"},
         risk_score=55
     )
 
@@ -89,7 +89,7 @@ def seed_database():
         type="contract",
         name="Licitación Ruta 5 Sur",
         country="CL",
-        metadata={"amount": 4500000000, "currency": "CLP", "year": 2022, "organism": "MOP"},
+        meta={"amount": 4500000000, "currency": "CLP", "year": 2022, "organism": "MOP"},
         risk_score=90
     )
     oirs = Node(
@@ -97,7 +97,7 @@ def seed_database():
         type="contract",
         name="Modernización OIRS Santiago",
         country="CL",
-        metadata={"amount": 185000000, "currency": "CLP", "year": 2023, "organism": "SEGPRES"},
+        meta={"amount": 185000000, "currency": "CLP", "year": 2023, "organism": "SEGPRES"},
         risk_score=65
     )
     regulador = Node(
@@ -105,7 +105,7 @@ def seed_database():
         type="contract",
         name="Plan Regulador Comunal",
         country="CL",
-        metadata={"amount": 95000000, "currency": "CLP", "year": 2021, "organism": "MINVU"},
+        meta={"amount": 95000000, "currency": "CLP", "year": 2021, "organism": "MINVU"},
         risk_score=50
     )
 

@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -9,10 +10,31 @@ load_dotenv()
 
 settings = get_settings()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Inicializa tablas y seed al arrancar."""
+    try:
+        from config.database import Base, engine, SessionLocal
+        from models.node import Node
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            count = db.query(Node).count()
+            if count == 0:
+                from utils.seed import seed_database
+                seed_database()
+                print("✓ Base de datos inicializada con datos de ejemplo")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"⚠ DB init: {e}")
+    yield
+
 app = FastAPI(
     title="Mapa de Poder LATAM API",
     description="API para explorar redes de poder político y empresarial",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS middleware
