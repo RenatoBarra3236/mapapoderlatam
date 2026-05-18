@@ -1,6 +1,9 @@
-// Thin API client. Vite proxies /api → http://localhost:3001 (vite.config.js).
-
-const BASE = '/api';
+// Thin API client.
+// - In dev: Vite proxies `/api` → http://localhost:3001 (see vite.config.js).
+// - In prod (Vercel/Netlify): set VITE_API_URL to the deployed backend, e.g.
+//   `https://redpoder-backend.onrender.com/api`.
+// Trailing slash gets stripped so endpoint paths concatenate cleanly.
+const BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
 export async function fetchSummary(caseId, lang) {
   const res = await fetch(`${BASE}/ai/summary/${caseId}?lang=${lang}`);
