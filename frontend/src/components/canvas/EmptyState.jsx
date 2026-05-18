@@ -44,8 +44,8 @@ export default function EmptyState({ t, lang, onPick }) {
   }));
 
   const title = lang === 'es'
-    ? <>DeQuiénes te muestra los datos. <em>Nosotros te decimos qué significan.</em></>
-    : <>DeQuiénes shows you the data. <em>We tell you what it means.</em></>;
+    ? <>Los datos están a la vista. <em>Nosotros revelamos lo que esconden.</em></>
+    : <>The data is in plain sight. <em>We surface what it hides.</em></>;
 
   const subtitle = lang === 'es'
     ? "La IA detecta conflictos de interés, puertas giratorias y patrones sospechosos en segundos."
@@ -79,8 +79,8 @@ export default function EmptyState({ t, lang, onPick }) {
         <span className="empty-footer-line">{t.poweredBy}</span>
         <span className="empty-footer-line">
           {lang === 'es'
-            ? 'Datos demo ficticios · 🇨🇱 Chile (Ley 20.880 + modernización · Ley 21.719 datos personales) · 🇲🇽 México · 🇵🇪 Perú · 🇨🇴 Colombia'
-            : 'Fictional demo data · 🇨🇱 Chile (Law 20.880 + modernization · Law 21.719 data protection) · 🇲🇽 Mexico · 🇵🇪 Peru · 🇨🇴 Colombia'}
+            ? 'Análisis sobre datos de fuentes públicas oficiales · 🇨🇱 Chile (Ley 20.880 + modernización · Ley 21.719) · 🇲🇽 México · 🇵🇪 Perú · 🇨🇴 Colombia'
+            : 'Analysis based on official public-source data · 🇨🇱 Chile (Law 20.880 + modernization · Law 21.719) · 🇲🇽 Mexico · 🇵🇪 Peru · 🇨🇴 Colombia'}
         </span>
         <button className="empty-footer-link" onClick={() => setLegalOpen(true)}>
           {lang === 'es' ? 'Avisos legales y privacidad' : 'Legal notices and privacy'}
