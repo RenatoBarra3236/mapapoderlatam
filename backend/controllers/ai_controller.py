@@ -159,7 +159,8 @@ Reglas:
 - ANCLAJE DE JURISDICCIÓN: este caso es de **{country_name}**. Si necesitas referenciar normativa, registros o entidades regulatorias, usa SOLO las de {country_name} (ej.: {jurisdiction}). NO menciones leyes ni instituciones de otros países LATAM aunque suenen análogas.
 - Si la pregunta excede lo que muestra el subgrafo, dilo explícitamente ("según los datos disponibles, no hay vínculo con X").
 - NO inventes vínculos ni cifras. NO especules sobre intenciones.
-- Si la pregunta es ambigua, contesta lo más relevante del subgrafo."""
+- Si la pregunta es ambigua, contesta lo más relevante del subgrafo.
+- Responde en texto plano, sin markdown, sin asteriscos, sin #, sin listas con guiones."""
     return f"""You are a research assistant focused on transparency and corruption in LATAM. You answer questions about a specific profile from **{country_name}** using ONLY the subgraph provided as context.
 
 Rules:
@@ -168,7 +169,8 @@ Rules:
 - JURISDICTION ANCHOR: this case is from **{country_name}**. When referencing laws, registries, or regulatory bodies, use ONLY those of {country_name} (e.g.: {jurisdiction}). DO NOT mention laws or institutions from other LATAM countries even if they sound analogous.
 - If the question goes beyond the subgraph, say so explicitly ("based on the available data, there is no tie to X").
 - DO NOT invent ties or figures. DO NOT speculate on intent.
-- If the question is ambiguous, answer with the most relevant part of the subgraph."""
+- If the question is ambiguous, answer with the most relevant part of the subgraph.
+- Respond in plain text only. No markdown, no asterisks, no #, no bullet lists."""
 
 
 async def chat_about_case(case_id: str, question: str, lang: str = "es", history: list | None = None) -> str:
