@@ -51,6 +51,20 @@ app.add_middleware(
 async def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
+# DB diagnostics (solo para debug — borrar después)
+@app.get("/api/dbcheck")
+async def db_check():
+    try:
+        from config.database import engine, SessionLocal
+        from models.node import Node
+        db = SessionLocal()
+        count = db.query(Node).count()
+        db.close()
+        db_url = str(engine.url).split("@")[-1]  # oculta credenciales
+        return {"status": "ok", "nodes": count, "host": db_url}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
 # Rutas
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
